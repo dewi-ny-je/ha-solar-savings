@@ -1,0 +1,22 @@
+write a github project for a home assistant integration which fulfils all the coding standards for quality, as set by home assistant.
+
+The integration must track the savings which result from running solar panels at home, also in combination with dynamic tariffs with different import/export tariffs which change dynamically over time.
+
+the idea is that the generated solar energy first reduces the imports from the grid, then when more energy is produced than needed, the excess is exported to the grid, at typically a much lower value.
+
+The integration should take as input one energy sensor tracking energy generation by solar panels. This sensor can track total or daily production, but it is expected to provide an always increasing value, therefore it needs to filter out negative differences such as those resulting from tracking daily energy generation which resets at midnight.
+
+The integration should also take two sensors for imports: imported energy and the price of said imported energy.
+The integration should also take two more sensors for exports: amount of exports and the value of said exports.
+
+The entities from the smart meter tracking imports and exports are not updated at the same time as the energy generation from solar panels: the former are updated likely every 15 seconds, the latter once every 5 minutes.
+
+At each update of the sensors tracking energy generated, the integration should first calculate net export as the diffrence exports minus imports. If negative, no net export takes place and the net export should be zero. If positive, the revenue from exports should be valued using the sensor entity for value of exported energy. The net exports should be accumulated into a temporary variable.
+
+Once the sensor for solar generation is updated, the accumulated net exported energy shoud be subtracted from it, then the remaining generated energy should be valued using the sensor tracking value of imported energy.
+
+The two calculated revenues should be exposed as two sensors using the appropriate unit of measure of currency. The total revenue, obtained as sum of the two separate revenues, should also be exposed as a sensor.
+
+Be sure to add the correct definitions so that Home assistant can track statistical data about the sensors exposed.
+
+The project should also comprise test cases which can be run during future development to ensure the results are consistent and no regressions take place.
