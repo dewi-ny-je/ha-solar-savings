@@ -1,0 +1,100 @@
+"""Config flow for Solar Savings."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import voluptuous as vol
+
+from homeassistant import config_entries
+from homeassistant.const import CONF_NAME
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import selector
+
+from .const import (
+    CONF_EXPORT_ENERGY_SENSOR,
+    CONF_EXPORT_PRICE_SENSOR,
+    CONF_IMPORT_ENERGY_SENSOR,
+    CONF_IMPORT_PRICE_SENSOR,
+    CONF_SOLAR_ENERGY_SENSOR,
+    DOMAIN,
+)
+
+DEFAULT_NAME = "Solar savings"
+
+
+def _entity_selector(device_class: str | None = None) -> selector.EntitySelector:
+    """Build an entity selector restricted to sensors."""
+    config: dict[str, Any] = {"domain": "sensor"}
+    if device_class is not None:
+        config["device_class"] = device_class
+    return selector.EntitySelector(selector.EntitySelectorConfig(**config))
+
+
+STEP_USER_DATA_SCHEMA = vol.Schema(
+    {
+        vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
+        vol.Required(CONF_SOLAR_ENERGY_SENSOR): _entity_selector("energy"),
+        vol.Required(CONF_IMPORT_ENERGY_SENSOR): _entity_selector("energy"),
+        vol.Required(CONF_IMPORT_PRICE_SENSOR): _entity_selector("monetary"),
+        vol.Required(CONF_EXPORT_ENERGY_SENSOR): _entity_selector("energy"),
+        vol.Required(CONF_EXPORT_PRICE_SENSOR): _entity_selector("monetary"),
+    }
+)
+
+
+async def validate_input(hass: HomeAssistant, user_input: dict[str, Any]) -> dict[str, str]:
+    """Validate the user input allows setup.
+
+    The selected entities may be template/utility-meter helpers, so validation is
+    intentionally limited to presence and duplicate checks. Runtime unavailable
+    states are handled gracefully by the calculator.
+    """
+    entities = [
+        user_input[CONF_SOLAR_ENERGY_SENSOR],
+        user_input[CONF_IMPORT_ENERGY_SENSOR],
+        user_input[CONF_IMPORT_PRICE_SENSOR],
+        user_input[CONF_EXPORT_ENERGY_SENSOR],
+        user_input[CONF_EXPORT_PRICE_SENSOR],
+    ]
+    if len(entities) != len(set(entities)):
+        return {"base": "duplicate_entity"}
+    missing = [entity_id for entity_id in entities if hass.states.get(entity_id) is None]
+    if missing:
+        return {"base": "entity_not_found"}
+    return {}
+
+
+class SolarSavingsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Solar Savings."""
+
+    VERSION = 1
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Handle the initial step."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            errors = await validate_input(self.hass, user_input)
+            if not errors:
+                await self.async_set_unique_id(
+                    "|".join(
+                        [
+                            user_input[CONF_SOLAR_ENERGY_SENSOR],
+                            user_input[CONF_IMPORT_ENERGY_SENSOR],
+                            user_input[CONF_EXPORT_ENERGY_SENSOR],
+                        ]
+                    )
+                )
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(
+                    title=user_input[CONF_NAME],
+                    data=user_input,
+                )
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=STEP_USER_DATA_SCHEMA,
+            errors=errors,
+        )

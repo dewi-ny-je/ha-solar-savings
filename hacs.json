@@ -1,0 +1,5 @@
+{
+  "name": "Solar Savings",
+  "render_readme": true,
+  "domains": ["sensor"]
+}

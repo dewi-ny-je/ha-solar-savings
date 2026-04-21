@@ -1,0 +1,15 @@
+{
+  "domain": "solar_savings",
+  "name": "Solar Savings",
+  "after_dependencies": ["sensor"],
+  "codeowners": ["@your-github-handle"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/your-github-handle/ha-solar-savings",
+  "integration_type": "helper",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/your-github-handle/ha-solar-savings/issues",
+  "quality_scale": "bronze",
+  "requirements": [],
+  "version": "0.1.0"
+}

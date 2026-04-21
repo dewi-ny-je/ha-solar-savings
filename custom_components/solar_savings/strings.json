@@ -1,0 +1,39 @@
+{
+  "title": "Solar Savings",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Solar Savings",
+        "description": "Choose the sensors used to calculate cumulative solar savings. Energy sensors should be kWh counters. Price sensors should expose the current import or export price per kWh in your configured currency.",
+        "data": {
+          "name": "Name",
+          "solar_energy_sensor": "Solar generation energy sensor",
+          "import_energy_sensor": "Imported energy sensor",
+          "import_price_sensor": "Import price sensor",
+          "export_energy_sensor": "Exported energy sensor",
+          "export_price_sensor": "Export price sensor"
+        }
+      }
+    },
+    "error": {
+      "duplicate_entity": "Each selected sensor must be unique.",
+      "entity_not_found": "One or more selected entities could not be found."
+    },
+    "abort": {
+      "already_configured": "These energy meters are already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "self_consumption_savings": {
+        "name": "Self-consumption savings"
+      },
+      "export_revenue": {
+        "name": "Export revenue"
+      },
+      "total_savings": {
+        "name": "Total savings"
+      }
+    }
+  }
+}
