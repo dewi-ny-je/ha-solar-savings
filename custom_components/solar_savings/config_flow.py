@@ -8,7 +8,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 
 from .const import (
@@ -70,6 +70,14 @@ class SolarSavingsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Create the options flow."""
+        return SolarSavingsOptionsFlow(config_entry)
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
@@ -96,5 +104,59 @@ class SolarSavingsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=STEP_USER_DATA_SCHEMA,
+            errors=errors,
+        )
+
+class SolarSavingsOptionsFlow(config_entries.OptionsFlow):
+    """Handle options for Solar Savings."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self._config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Manage Solar Savings options."""
+        errors: dict[str, str] = {}
+        current_config = {**self._config_entry.data, **self._config_entry.options}
+
+        if user_input is not None:
+            errors = await validate_input(self.hass, user_input)
+            if not errors:
+                return self.async_create_entry(title="", data=user_input)
+
+        options_schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_NAME,
+                    default=current_config.get(CONF_NAME, DEFAULT_NAME),
+                ): str,
+                vol.Required(
+                    CONF_SOLAR_ENERGY_SENSOR,
+                    default=current_config[CONF_SOLAR_ENERGY_SENSOR],
+                ): _entity_selector("energy"),
+                vol.Required(
+                    CONF_IMPORT_ENERGY_SENSOR,
+                    default=current_config[CONF_IMPORT_ENERGY_SENSOR],
+                ): _entity_selector("energy"),
+                vol.Required(
+                    CONF_IMPORT_PRICE_SENSOR,
+                    default=current_config[CONF_IMPORT_PRICE_SENSOR],
+                ): _entity_selector("monetary"),
+                vol.Required(
+                    CONF_EXPORT_ENERGY_SENSOR,
+                    default=current_config[CONF_EXPORT_ENERGY_SENSOR],
+                ): _entity_selector("energy"),
+                vol.Required(
+                    CONF_EXPORT_PRICE_SENSOR,
+                    default=current_config[CONF_EXPORT_PRICE_SENSOR],
+                ): _entity_selector("monetary"),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=options_schema,
             errors=errors,
         )
