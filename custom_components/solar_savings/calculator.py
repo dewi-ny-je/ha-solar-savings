@@ -81,6 +81,39 @@ class SolarSavingsCalculator:
         """Return a JSON-serializable snapshot."""
         return asdict(self._snapshot)
 
+    def restore_public_value(self, value_key: str, value: Any) -> bool:
+        """Restore a public cumulative value from Home Assistant state storage.
+
+        Home Assistant stores the native value for sensors that inherit from
+        RestoreSensor. The integration also persists its full accounting
+        snapshot with Store, but restoring the public cumulative values gives us
+        a second line of defence after restarts and reloads.
+
+        Restored values are cumulative totals, so never lower the internal
+        accounting value with an older restored state.
+        """
+        restored = to_decimal(value)
+        if restored is None or restored < ZERO:
+            return False
+
+        if value_key == "self_consumption_savings":
+            current = Decimal(self._snapshot.self_consumption_savings)
+            if restored > current:
+                self._snapshot.self_consumption_savings = str(restored)
+                return True
+            return False
+
+        if value_key == "export_revenue":
+            current = Decimal(self._snapshot.export_revenue)
+            if restored > current:
+                self._snapshot.export_revenue = str(restored)
+                return True
+            return False
+
+        # total_savings is derived from the two source totals and should not be
+        # restored directly, otherwise it could disagree with them.
+        return False
+    
     @property
     def values(self) -> SolarSavingsValues:
         """Return current public sensor values."""
