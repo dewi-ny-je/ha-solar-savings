@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from homeassistant.components.sensor import (
     SensorDeviceClass,
+    RestoreSensor,
     SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
@@ -62,7 +63,7 @@ async def async_setup_entry(
     )
 
 
-class SolarSavingsSensor(SensorEntity):
+class SolarSavingsSensor(RestoreSensor, SensorEntity):
     """Sensor exposing cumulative solar savings."""
 
     entity_description: SolarSavingsSensorEntityDescription
@@ -94,7 +95,17 @@ class SolarSavingsSensor(SensorEntity):
         return float(value)
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to integration updates."""
+        """Restore the last state and subscribe to integration updates."""
+        await super().async_added_to_hass()
+
+        if (last_sensor_data := await self.async_get_last_sensor_data()) is not None:
+            data: SolarSavingsRuntimeData = self.entry.runtime_data
+            if data.calculator.restore_public_value(
+                self.entity_description.value_key,
+                last_sensor_data.native_value,
+            ):
+                await data.store.async_save(data.calculator.as_dict())
+    
         self.async_on_remove(
             async_dispatcher_connect(
                 self.hass,
