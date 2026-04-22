@@ -23,6 +23,26 @@
       "already_configured": "These energy meters are already configured."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure Solar Savings",
+        "description": "Update the sensors used to calculate cumulative solar savings.",
+        "data": {
+          "name": "Name",
+          "solar_energy_sensor": "Solar generation energy sensor",
+          "import_energy_sensor": "Imported energy sensor",
+          "import_price_sensor": "Import price sensor",
+          "export_energy_sensor": "Exported energy sensor",
+          "export_price_sensor": "Export price sensor"
+        }
+      }
+    },
+    "error": {
+      "duplicate_entity": "Each selected sensor must be unique.",
+      "entity_not_found": "One or more selected entities could not be found."
+    }
+  },  
   "entity": {
     "sensor": {
       "self_consumption_savings": {
