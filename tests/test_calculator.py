@@ -93,3 +93,25 @@ def test_snapshot_roundtrip_preserves_totals() -> None:
     restored = SolarSavingsCalculator.from_dict(calc.as_dict())
 
     assert restored.values.self_consumption_savings == Decimal("0.40")
+
+def test_restore_public_value_uses_highest_cumulative_value() -> None:
+    """RestoreSensor data should recover lost totals without rolling them back."""
+    calc = SolarSavingsCalculator()
+
+    assert calc.restore_public_value("self_consumption_savings", "12.34") is True
+    assert calc.values.self_consumption_savings == Decimal("12.34")
+
+    assert calc.restore_public_value("self_consumption_savings", "10.00") is False
+    assert calc.values.self_consumption_savings == Decimal("12.34")
+
+    assert calc.restore_public_value("export_revenue", Decimal("1.23")) is True
+    assert calc.values.export_revenue == Decimal("1.23")
+    assert calc.values.total_savings == Decimal("13.57")
+
+
+def test_restore_does_not_set_derived_total_directly() -> None:
+    """The total sensor remains derived from self-consumption and export totals."""
+    calc = SolarSavingsCalculator()
+
+    assert calc.restore_public_value("total_savings", "99") is False
+    assert calc.values.total_savings == Decimal("0")
