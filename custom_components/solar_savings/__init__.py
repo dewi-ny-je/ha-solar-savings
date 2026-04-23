@@ -75,7 +75,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             export_price=to_decimal(price_state.state if price_state else None),
         )
         if changed:
-            hass.async_create_task(async_save_and_update())
+            hass.create_task(async_save_and_update())
 
     def handle_solar_event(event: Event) -> None:
         solar_state = hass.states.get(config[CONF_SOLAR_ENERGY_SENSOR])
@@ -85,7 +85,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             import_price=to_decimal(price_state.state if price_state else None),
         )
         if changed:
-            hass.async_create_task(async_save_and_update())
+            hass.create_task(async_save_and_update())
 
     data.remove_listeners.extend(
         [
