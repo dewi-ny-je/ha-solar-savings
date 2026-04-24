@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Callable
 
 from .calculator import SolarSavingsCalculator, to_decimal
@@ -25,6 +27,13 @@ if TYPE_CHECKING:
 
 
 PLATFORMS = ["sensor"]
+_LOGGER = logging.getLogger(__name__)
+_ENERGY_TO_KWH = {
+    "Wh": Decimal("0.001"),
+    "kWh": Decimal("1"),
+    "MWh": Decimal("1000"),
+}
+_WARNED_UNITS_BY_ENTITY: dict[str, Any] = {}
 
 
 @dataclass(slots=True)
@@ -34,6 +43,33 @@ class SolarSavingsRuntimeData:
     calculator: SolarSavingsCalculator
     store: Store[dict[str, Any]]
     remove_listeners: list[Callable[[], None]]
+
+
+def energy_to_kwh(state: Any | None) -> Decimal | None:
+    """Convert an energy sensor state to kWh."""
+    if state is None:
+        return None
+
+    value = to_decimal(state.state)
+    if value is None:
+        return None
+
+    unit = state.attributes.get("unit_of_measurement")
+    factor = _ENERGY_TO_KWH.get(unit)
+    if factor is None:
+        previous_unit = _WARNED_UNITS_BY_ENTITY.get(state.entity_id)
+        if previous_unit != unit:
+            _LOGGER.warning(
+                "Ignoring energy sensor %s because its unit %r is not supported; "
+                "expected Wh, kWh, or MWh",
+                state.entity_id,
+                unit,
+            )
+            _WARNED_UNITS_BY_ENTITY[state.entity_id] = unit
+        return None
+
+    _WARNED_UNITS_BY_ENTITY.pop(state.entity_id, None)
+    return value * factor
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -54,9 +90,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     import_state = hass.states.get(config[CONF_IMPORT_ENERGY_SENSOR])
     export_state = hass.states.get(config[CONF_EXPORT_ENERGY_SENSOR])
     calculator.seed(
-        solar_energy=to_decimal(solar_state.state if solar_state else None),
-        import_energy=to_decimal(import_state.state if import_state else None),
-        export_energy=to_decimal(export_state.state if export_state else None),
+        solar_energy=energy_to_kwh(solar_state),
+        import_energy=energy_to_kwh(import_state),
+        export_energy=energy_to_kwh(export_state),
     )
 
     data = SolarSavingsRuntimeData(calculator, store, [])
@@ -71,8 +107,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         export_state = hass.states.get(config[CONF_EXPORT_ENERGY_SENSOR])
         price_state = hass.states.get(config[CONF_EXPORT_PRICE_SENSOR])
         changed = calculator.handle_grid_update(
-            import_energy=to_decimal(import_state.state if import_state else None),
-            export_energy=to_decimal(export_state.state if export_state else None),
+            import_energy=energy_to_kwh(import_state),
+            export_energy=energy_to_kwh(export_state),
             export_price=to_decimal(price_state.state if price_state else None),
         )
         if changed:
@@ -82,7 +118,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         solar_state = hass.states.get(config[CONF_SOLAR_ENERGY_SENSOR])
         price_state = hass.states.get(config[CONF_IMPORT_PRICE_SENSOR])
         changed = calculator.handle_solar_update(
-            solar_energy=to_decimal(solar_state.state if solar_state else None),
+            solar_energy=energy_to_kwh(solar_state),
             import_price=to_decimal(price_state.state if price_state else None),
         )
         if changed:
