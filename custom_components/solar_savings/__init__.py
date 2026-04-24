@@ -14,6 +14,7 @@ from .const import (
     CONF_SOLAR_ENERGY_SENSOR,
     SIGNAL_UPDATED,
     STORAGE_KEY,
+    STORAGE_SAVE_DELAY,
     STORAGE_VERSION,
 )
 
@@ -61,8 +62,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data = SolarSavingsRuntimeData(calculator, store, [])
     entry.runtime_data = data
 
-    async def async_save_and_update() -> None:
-        await store.async_save(calculator.as_dict())
+    def schedule_save_and_update() -> None:
+        store.async_delay_save(calculator.as_dict, STORAGE_SAVE_DELAY)
         async_dispatcher_send(hass, f"{SIGNAL_UPDATED}_{entry.entry_id}")
 
     def handle_grid_event(event: Event) -> None:
@@ -75,7 +76,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             export_price=to_decimal(price_state.state if price_state else None),
         )
         if changed:
-            hass.create_task(async_save_and_update())
+            schedule_save_and_update()
 
     def handle_solar_event(event: Event) -> None:
         solar_state = hass.states.get(config[CONF_SOLAR_ENERGY_SENSOR])
@@ -85,7 +86,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             import_price=to_decimal(price_state.state if price_state else None),
         )
         if changed:
-            hass.create_task(async_save_and_update())
+            schedule_save_and_update()
 
     data.remove_listeners.extend(
         [
@@ -107,7 +108,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, platforms)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
-    await store.async_save(calculator.as_dict())
+    store.async_delay_save(calculator.as_dict, STORAGE_SAVE_DELAY)
     return True
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

@@ -15,5 +15,6 @@ CONF_EXPORT_PRICE_SENSOR: Final = "export_price_sensor"
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY: Final = f"{DOMAIN}.state"
+STORAGE_SAVE_DELAY: Final = 10
 
 SIGNAL_UPDATED: Final = f"{DOMAIN}_updated"
