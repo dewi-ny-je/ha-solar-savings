@@ -53,7 +53,16 @@ def _entity_exists(hass: HomeAssistant, entity_id: str) -> bool:
         return True
 
     registry = er.async_get(hass)
-    return registry.async_get(entity_id) is not None
+    if (entry := registry.async_get(entity_id)) is None:
+        return False
+
+    if entry.disabled_by is not None:
+        return False
+
+    if getattr(entry, "removed", False):
+        return False
+
+    return True
 
 
 async def validate_input(hass: HomeAssistant, user_input: dict[str, Any]) -> dict[str, str]:

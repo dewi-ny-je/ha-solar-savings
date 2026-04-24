@@ -45,3 +45,36 @@ async def test_validate_input_accepts_registered_entity_without_state(hass) -> N
     )
 
     assert errors == {}
+
+
+async def test_validate_input_rejects_disabled_registered_entity(hass) -> None:
+    """Disabled registry entries should fail validation."""
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "sensor",
+        "test",
+        "solar_energy",
+        suggested_object_id="solar_energy",
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+
+    for object_id in ("import_energy", "import_price", "export_energy", "export_price"):
+        registry.async_get_or_create(
+            "sensor",
+            "test",
+            object_id,
+            suggested_object_id=object_id,
+        )
+
+    errors = await validate_input(
+        hass,
+        {
+            CONF_SOLAR_ENERGY_SENSOR: "sensor.solar_energy",
+            CONF_IMPORT_ENERGY_SENSOR: "sensor.import_energy",
+            CONF_IMPORT_PRICE_SENSOR: "sensor.import_price",
+            CONF_EXPORT_ENERGY_SENSOR: "sensor.export_energy",
+            CONF_EXPORT_PRICE_SENSOR: "sensor.export_price",
+        },
+    )
+
+    assert errors == {"base": "entity_not_found"}
