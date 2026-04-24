@@ -75,6 +75,7 @@ def energy_to_kwh(state: Any | None) -> Decimal | None:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Solar Savings from a config entry."""
     from homeassistant.const import Platform
+    from homeassistant.core import callback
     from homeassistant.helpers.dispatcher import async_dispatcher_send
     from homeassistant.helpers.event import async_track_state_change_event
     from homeassistant.helpers.storage import Store
@@ -98,10 +99,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data = SolarSavingsRuntimeData(calculator, store, [])
     entry.runtime_data = data
 
-    def schedule_save_and_update() -> None:
+    @callback
+    def async_schedule_save_and_update() -> None:
         store.async_delay_save(calculator.as_dict, STORAGE_SAVE_DELAY)
         async_dispatcher_send(hass, f"{SIGNAL_UPDATED}_{entry.entry_id}")
 
+    @callback
     def handle_grid_event(event: Event) -> None:
         import_state = hass.states.get(config[CONF_IMPORT_ENERGY_SENSOR])
         export_state = hass.states.get(config[CONF_EXPORT_ENERGY_SENSOR])
@@ -112,8 +115,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             export_price=to_decimal(price_state.state if price_state else None),
         )
         if changed:
-            schedule_save_and_update()
+            async_schedule_save_and_update()
 
+    @callback
     def handle_solar_event(event: Event) -> None:
         solar_state = hass.states.get(config[CONF_SOLAR_ENERGY_SENSOR])
         price_state = hass.states.get(config[CONF_IMPORT_PRICE_SENSOR])
@@ -122,7 +126,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             import_price=to_decimal(price_state.state if price_state else None),
         )
         if changed:
-            schedule_save_and_update()
+            async_schedule_save_and_update()
 
     data.remove_listeners.extend(
         [
