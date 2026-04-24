@@ -9,7 +9,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import selector
+from homeassistant.helpers import entity_registry as er, selector
 
 from .const import (
     CONF_EXPORT_ENERGY_SENSOR,
@@ -57,6 +57,28 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 )
 
 
+def _entity_exists(hass: HomeAssistant, entity_id: str) -> bool:
+    """Return whether an entity exists or is registered.
+
+    Some integrations restore/register entities before their current state is
+    available, especially after Home Assistant startup.
+    """
+    if hass.states.get(entity_id) is not None:
+        return True
+
+    registry = er.async_get(hass)
+    if (entry := registry.async_get(entity_id)) is None:
+        return False
+
+    if entry.disabled_by is not None:
+        return False
+
+    if getattr(entry, "removed", False):
+        return False
+
+    return True
+
+
 async def validate_input(hass: HomeAssistant, user_input: dict[str, Any]) -> dict[str, str]:
     """Validate the user input allows setup.
 
@@ -73,7 +95,7 @@ async def validate_input(hass: HomeAssistant, user_input: dict[str, Any]) -> dic
     ]
     if len(entities) != len(set(entities)):
         return {"base": "duplicate_entity"}
-    missing = [entity_id for entity_id in entities if hass.states.get(entity_id) is None]
+    missing = [entity_id for entity_id in entities if not _entity_exists(hass, entity_id)]
     if missing:
         return {"base": "entity_not_found"}
     return {}
