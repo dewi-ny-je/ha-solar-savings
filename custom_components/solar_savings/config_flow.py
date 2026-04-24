@@ -23,7 +23,7 @@ from .const import (
 DEFAULT_NAME = "Solar savings"
 
 
-def _entity_selector(device_class: str | None = None) -> selector.EntitySelector:
+def _sensor_selector(device_class: str | None = None) -> selector.EntitySelector:
     """Build an entity selector restricted to sensors."""
     config: dict[str, Any] = {"domain": "sensor"}
     if device_class is not None:
@@ -31,14 +31,28 @@ def _entity_selector(device_class: str | None = None) -> selector.EntitySelector
     return selector.EntitySelector(selector.EntitySelectorConfig(**config))
 
 
+def _energy_sensor_selector() -> selector.EntitySelector:
+    """Select energy counter sensors."""
+    return _sensor_selector("energy")
+
+
+def _price_sensor_selector() -> selector.EntitySelector:
+    """Select numeric price-per-kWh sensors.
+
+    Do not filter by device_class: monetary because many price sensors expose
+    currency/kWh units and no monetary device class.
+    """
+    return _sensor_selector()
+
+
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
-        vol.Required(CONF_SOLAR_ENERGY_SENSOR): _entity_selector("energy"),
-        vol.Required(CONF_IMPORT_ENERGY_SENSOR): _entity_selector("energy"),
-        vol.Required(CONF_IMPORT_PRICE_SENSOR): _entity_selector("monetary"),
-        vol.Required(CONF_EXPORT_ENERGY_SENSOR): _entity_selector("energy"),
-        vol.Required(CONF_EXPORT_PRICE_SENSOR): _entity_selector("monetary"),
+        vol.Required(CONF_SOLAR_ENERGY_SENSOR): _energy_sensor_selector(),
+        vol.Required(CONF_IMPORT_ENERGY_SENSOR): _energy_sensor_selector(),
+        vol.Required(CONF_IMPORT_PRICE_SENSOR): _price_sensor_selector(),
+        vol.Required(CONF_EXPORT_ENERGY_SENSOR): _energy_sensor_selector(),
+        vol.Required(CONF_EXPORT_PRICE_SENSOR): _price_sensor_selector(),
     }
 )
 
@@ -107,6 +121,7 @@ class SolarSavingsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+
 class SolarSavingsOptionsFlow(config_entries.OptionsFlow):
     """Handle options for Solar Savings."""
 
@@ -135,23 +150,23 @@ class SolarSavingsOptionsFlow(config_entries.OptionsFlow):
                 vol.Required(
                     CONF_SOLAR_ENERGY_SENSOR,
                     default=current_config[CONF_SOLAR_ENERGY_SENSOR],
-                ): _entity_selector("energy"),
+                ): _energy_sensor_selector(),
                 vol.Required(
                     CONF_IMPORT_ENERGY_SENSOR,
                     default=current_config[CONF_IMPORT_ENERGY_SENSOR],
-                ): _entity_selector("energy"),
+                ): _energy_sensor_selector(),
                 vol.Required(
                     CONF_IMPORT_PRICE_SENSOR,
                     default=current_config[CONF_IMPORT_PRICE_SENSOR],
-                ): _entity_selector("monetary"),
+                ): _price_sensor_selector(),
                 vol.Required(
                     CONF_EXPORT_ENERGY_SENSOR,
                     default=current_config[CONF_EXPORT_ENERGY_SENSOR],
-                ): _entity_selector("energy"),
+                ): _energy_sensor_selector(),
                 vol.Required(
                     CONF_EXPORT_PRICE_SENSOR,
                     default=current_config[CONF_EXPORT_PRICE_SENSOR],
-                ): _entity_selector("monetary"),
+                ): _price_sensor_selector(),
             }
         )
 
