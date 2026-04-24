@@ -32,21 +32,21 @@ SENSOR_DESCRIPTIONS: tuple[SolarSavingsSensorEntityDescription, ...] = (
         translation_key="self_consumption_savings",
         value_key="self_consumption_savings",
         device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL,
+        state_class=SensorStateClass.TOTAL_INCREASING,
     ),
     SolarSavingsSensorEntityDescription(
         key="export_revenue",
         translation_key="export_revenue",
         value_key="export_revenue",
         device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL,
+        state_class=SensorStateClass.TOTAL_INCREASING,
     ),
     SolarSavingsSensorEntityDescription(
         key="total_savings",
         translation_key="total_savings",
         value_key="total_savings",
         device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL,
+        state_class=SensorStateClass.TOTAL_INCREASING,
     ),
 )
 
