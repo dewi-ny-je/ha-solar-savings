@@ -16,7 +16,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import SolarSavingsRuntimeData
-from .const import DOMAIN, SIGNAL_UPDATED
+from .const import DOMAIN, SIGNAL_UPDATED, STORAGE_SAVE_DELAY
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -104,8 +104,8 @@ class SolarSavingsSensor(RestoreSensor, SensorEntity):
                 self.entity_description.value_key,
                 last_sensor_data.native_value,
             ):
-                await data.store.async_save(data.calculator.as_dict())
-    
+                data.store.async_delay_save(data.calculator.as_dict, STORAGE_SAVE_DELAY)
+
         self.async_on_remove(
             async_dispatcher_connect(
                 self.hass,
