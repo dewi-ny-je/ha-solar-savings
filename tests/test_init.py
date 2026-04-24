@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from custom_components.solar_savings import energy_to_kwh
+from custom_components.solar_savings import _WARNED_UNITS_BY_ENTITY, energy_to_kwh
 
 
 @dataclass
@@ -46,6 +46,7 @@ def test_energy_to_kwh_rejects_unknown_unit() -> None:
 
 
 def test_energy_to_kwh_logs_unknown_unit(caplog) -> None:
+    _WARNED_UNITS_BY_ENTITY.clear()
     state = FakeState(
         "sensor.grid_energy",
         "12",
@@ -55,3 +56,17 @@ def test_energy_to_kwh_logs_unknown_unit(caplog) -> None:
     energy_to_kwh(state)
 
     assert "not supported" in caplog.text
+
+
+def test_energy_to_kwh_logs_unknown_unit_once_per_entity_and_unit(caplog) -> None:
+    _WARNED_UNITS_BY_ENTITY.clear()
+    state = FakeState(
+        "sensor.grid_energy",
+        "12",
+        {"unit_of_measurement": "foo"},
+    )
+
+    energy_to_kwh(state)
+    energy_to_kwh(state)
+
+    assert caplog.text.count("not supported") == 1

@@ -32,6 +32,7 @@ _ENERGY_TO_KWH = {
     "kWh": Decimal("1"),
     "MWh": Decimal("1000"),
 }
+_WARNED_UNITS_BY_ENTITY: dict[str, Any] = {}
 
 
 @dataclass(slots=True)
@@ -55,14 +56,18 @@ def energy_to_kwh(state: Any | None) -> Decimal | None:
     unit = state.attributes.get("unit_of_measurement")
     factor = _ENERGY_TO_KWH.get(unit)
     if factor is None:
-        _LOGGER.warning(
-            "Ignoring energy sensor %s because its unit %r is not supported; "
-            "expected Wh, kWh, or MWh",
-            state.entity_id,
-            unit,
-        )
+        previous_unit = _WARNED_UNITS_BY_ENTITY.get(state.entity_id)
+        if previous_unit != unit:
+            _LOGGER.warning(
+                "Ignoring energy sensor %s because its unit %r is not supported; "
+                "expected Wh, kWh, or MWh",
+                state.entity_id,
+                unit,
+            )
+            _WARNED_UNITS_BY_ENTITY[state.entity_id] = unit
         return None
 
+    _WARNED_UNITS_BY_ENTITY.pop(state.entity_id, None)
     return value * factor
 
 
