@@ -218,12 +218,12 @@ class SolarSavingsCalculator:
             )
             changed = True
 
-        if pending_export_revenue > ZERO:
+        if pending_export_revenue != ZERO:
             export_revenue = Decimal(self._snapshot.export_revenue)
             self._snapshot.export_revenue = str(export_revenue + pending_export_revenue)
             changed = True
 
-        if pending_export > ZERO or pending_export_revenue > ZERO:
+        if pending_export > ZERO or pending_export_revenue != ZERO:
             self._snapshot.pending_net_export_energy = "0"
             self._snapshot.pending_export_revenue = "0"
             changed = True

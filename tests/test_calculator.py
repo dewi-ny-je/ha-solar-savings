@@ -84,6 +84,25 @@ def test_export_revenue_waits_for_next_solar_update() -> None:
     assert calc.values.self_consumption_savings == Decimal("0.25")
 
 
+
+def test_negative_export_price_reduces_export_revenue() -> None:
+    """Negative export tariffs should reduce cumulative export revenue."""
+    calc = SolarSavingsCalculator()
+    calc.seed(solar_energy=Decimal("100"), import_energy=Decimal("0"), export_energy=Decimal("0"))
+
+    calc.handle_grid_update(
+        import_energy=Decimal("0"),
+        export_energy=Decimal("2"),
+        export_price=Decimal("-0.05"),
+    )
+
+    assert calc.values.export_revenue == Decimal("0")
+
+    calc.handle_solar_update(solar_energy=Decimal("102"), import_price=Decimal("0.30"))
+
+    assert calc.values.export_revenue == Decimal("-0.10")
+    assert calc.values.total_savings == Decimal("-0.10")
+
 def test_snapshot_roundtrip_preserves_totals() -> None:
     """Storage snapshots should survive reloads without losing accounting state."""
     calc = SolarSavingsCalculator()
