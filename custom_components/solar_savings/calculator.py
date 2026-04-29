@@ -1,4 +1,4 @@
-"""Pure calculation model for Solar Savings.
+a"""Pure calculation model for Solar Savings.
 
 The model is intentionally independent from Home Assistant so it can be tested
 quickly and deterministically. Home Assistant event handling lives in
@@ -89,8 +89,9 @@ class SolarSavingsCalculator:
         snapshot with Store, but restoring the public cumulative values gives us
         a second line of defence after restarts and reloads.
 
-        Restored values are cumulative totals, so never lower the internal
-        accounting value with an older restored state.
+        Negative energy prices can make cumulative monetary totals decrease or
+        become negative, so a restored value is valid even when it is lower than
+        the current stored value.
         """
         restored = to_decimal(value)
         if restored is None:
