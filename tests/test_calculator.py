@@ -113,19 +113,28 @@ def test_snapshot_roundtrip_preserves_totals() -> None:
 
     assert restored.values.self_consumption_savings == Decimal("0.40")
 
-def test_restore_public_value_uses_highest_cumulative_value() -> None:
-    """RestoreSensor data should recover lost totals without rolling them back."""
+def test_restore_public_value_uses_restored_source_value() -> None:
+    """RestoreSensor data should recover signed source totals."""
     calc = SolarSavingsCalculator()
 
     assert calc.restore_public_value("self_consumption_savings", "12.34") is True
     assert calc.values.self_consumption_savings == Decimal("12.34")
 
-    assert calc.restore_public_value("self_consumption_savings", "10.00") is False
-    assert calc.values.self_consumption_savings == Decimal("12.34")
+    assert calc.restore_public_value("self_consumption_savings", "10.00") is True
+    assert calc.values.self_consumption_savings == Decimal("10.00")
 
-    assert calc.restore_public_value("export_revenue", Decimal("1.23")) is True
-    assert calc.values.export_revenue == Decimal("1.23")
-    assert calc.values.total_savings == Decimal("13.57")
+    assert calc.restore_public_value("export_revenue", Decimal("-1.23")) is True
+    assert calc.values.export_revenue == Decimal("-1.23")
+    assert calc.values.total_savings == Decimal("8.77")
+
+
+def test_restore_public_value_ignores_invalid_and_unchanged_values() -> None:
+    """RestoreSensor data should ignore non-numeric and unchanged values."""
+    calc = SolarSavingsCalculator()
+    
+    assert calc.restore_public_value("self_consumption_savings", "unavailable") is False
+    assert calc.restore_public_value("self_consumption_savings", "0") is False
+    assert calc.values.self_consumption_savings == Decimal("0")
 
 
 def test_restore_does_not_set_derived_total_directly() -> None:
