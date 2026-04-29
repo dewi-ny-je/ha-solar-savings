@@ -1,4 +1,4 @@
-a"""Pure calculation model for Solar Savings.
+"""Pure calculation model for Solar Savings.
 
 The model is intentionally independent from Home Assistant so it can be tested
 quickly and deterministically. Home Assistant event handling lives in
