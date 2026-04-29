@@ -93,19 +93,19 @@ class SolarSavingsCalculator:
         accounting value with an older restored state.
         """
         restored = to_decimal(value)
-        if restored is None or restored < ZERO:
+        if restored is None:
             return False
 
         if value_key == "self_consumption_savings":
             current = Decimal(self._snapshot.self_consumption_savings)
-            if restored > current:
+            if restored != current:
                 self._snapshot.self_consumption_savings = str(restored)
                 return True
             return False
 
         if value_key == "export_revenue":
             current = Decimal(self._snapshot.export_revenue)
-            if restored > current:
+            if restored != current:
                 self._snapshot.export_revenue = str(restored)
                 return True
             return False
