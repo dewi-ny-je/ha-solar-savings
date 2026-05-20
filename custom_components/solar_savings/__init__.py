@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from time import monotonic
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Callable
@@ -13,7 +14,9 @@ from .const import (
     CONF_EXPORT_PRICE_SENSOR,
     CONF_IMPORT_ENERGY_SENSOR,
     CONF_IMPORT_PRICE_SENSOR,
+    CONF_MIN_ACCOUNTING_INTERVAL,
     CONF_SOLAR_ENERGY_SENSOR,
+    DEFAULT_MIN_ACCOUNTING_INTERVAL,
     SIGNAL_UPDATED,
     STORAGE_KEY,
     STORAGE_SAVE_DELAY,
@@ -42,7 +45,10 @@ class SolarSavingsRuntimeData:
 
     calculator: SolarSavingsCalculator
     store: Store[dict[str, Any]]
+    minimum_accounting_interval: float
     remove_listeners: list[Callable[[], None]]
+    last_accounting_monotonic: float | None = None
+    cancel_scheduled_accounting: Callable[[], None] | None = None
 
 
 def energy_to_kwh(state: Any | None) -> Decimal | None:
@@ -77,7 +83,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from homeassistant.const import Platform
     from homeassistant.core import callback
     from homeassistant.helpers.dispatcher import async_dispatcher_send
-    from homeassistant.helpers.event import async_track_state_change_event
+    from homeassistant.helpers.event import (
+        async_call_later,
+        async_track_state_change_event,
+    )
     from homeassistant.helpers.storage import Store
 
     platforms = [Platform.SENSOR]
@@ -86,6 +95,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     calculator = SolarSavingsCalculator.from_dict(await store.async_load())
     config = {**entry.data, **entry.options}
+    minimum_accounting_interval = float(
+        config.get(CONF_MIN_ACCOUNTING_INTERVAL, DEFAULT_MIN_ACCOUNTING_INTERVAL)
+    )
 
     solar_state = hass.states.get(config[CONF_SOLAR_ENERGY_SENSOR])
     import_state = hass.states.get(config[CONF_IMPORT_ENERGY_SENSOR])
@@ -96,13 +108,56 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         export_energy=energy_to_kwh(export_state),
     )
 
-    data = SolarSavingsRuntimeData(calculator, store, [])
+    data = SolarSavingsRuntimeData(
+        calculator,
+        store,
+        minimum_accounting_interval,
+        [],
+    )
     entry.runtime_data = data
 
     @callback
     def async_schedule_save_and_update() -> None:
         store.async_delay_save(calculator.as_dict, STORAGE_SAVE_DELAY)
         async_dispatcher_send(hass, f"{SIGNAL_UPDATED}_{entry.entry_id}")
+
+    @callback
+    def async_settle_pending_accounting() -> None:
+        """Settle accumulated energy deltas into monetary totals."""
+        cancel_scheduled_accounting = data.cancel_scheduled_accounting
+        data.cancel_scheduled_accounting = None
+        if cancel_scheduled_accounting is not None:
+            cancel_scheduled_accounting()
+
+        price_state = hass.states.get(config[CONF_IMPORT_PRICE_SENSOR])
+        changed = calculator.settle_pending_accounting(
+            import_price=to_decimal(price_state.state if price_state else None),
+        )
+        data.last_accounting_monotonic = monotonic()
+        if changed:
+            async_schedule_save_and_update()
+
+    @callback
+    def async_schedule_accounting() -> None:
+        """Run or defer monetary accounting according to the configured interval."""
+        interval = data.minimum_accounting_interval
+        if interval <= 0:
+            async_settle_pending_accounting()
+            return
+
+        now = monotonic()
+        last_accounting = data.last_accounting_monotonic
+        if last_accounting is None or now - last_accounting >= interval:
+            async_settle_pending_accounting()
+            return
+
+        if data.cancel_scheduled_accounting is None:
+            delay = interval - (now - last_accounting)
+            data.cancel_scheduled_accounting = async_call_later(
+                hass,
+                delay,
+                lambda _now: async_settle_pending_accounting(),
+            )
 
     @callback
     def handle_grid_event(event: Event) -> None:
@@ -120,13 +175,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     @callback
     def handle_solar_event(event: Event) -> None:
         solar_state = hass.states.get(config[CONF_SOLAR_ENERGY_SENSOR])
-        price_state = hass.states.get(config[CONF_IMPORT_PRICE_SENSOR])
-        changed = calculator.handle_solar_update(
+        changed = calculator.observe_solar_update(
             solar_energy=energy_to_kwh(solar_state),
-            import_price=to_decimal(price_state.state if price_state else None),
         )
         if changed:
             async_schedule_save_and_update()
+            async_schedule_accounting()
 
     data.remove_listeners.extend(
         [
@@ -161,9 +215,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     from homeassistant.const import Platform
 
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, [Platform.SENSOR])
+    unload_ok = await hass.config_entries.async_unload_platforms(
+        entry,
+        [Platform.SENSOR],
+    )
     if unload_ok:
         data: SolarSavingsRuntimeData = entry.runtime_data
         for remove_listener in data.remove_listeners:
             remove_listener()
+        if data.cancel_scheduled_accounting is not None:
+            data.cancel_scheduled_accounting()
     return unload_ok
