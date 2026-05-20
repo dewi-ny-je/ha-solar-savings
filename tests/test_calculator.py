@@ -57,7 +57,11 @@ def test_self_consumption_and_export_revenue_are_accumulated() -> None:
 def test_negative_solar_delta_from_daily_reset_is_ignored() -> None:
     """Daily production sensors that reset at midnight must not regress totals."""
     calc = SolarSavingsCalculator()
-    calc.seed(solar_energy=Decimal("18"), import_energy=Decimal("0"), export_energy=Decimal("0"))
+    calc.seed(
+        solar_energy=Decimal("18"),
+        import_energy=Decimal("0"),
+        export_energy=Decimal("0"),
+    )
 
     calc.handle_solar_update(solar_energy=Decimal("0.2"), import_price=Decimal("0.30"))
 
@@ -68,7 +72,11 @@ def test_negative_solar_delta_from_daily_reset_is_ignored() -> None:
 def test_export_revenue_waits_for_next_solar_update() -> None:
     """Pending export revenue is exposed after solar production allocation."""
     calc = SolarSavingsCalculator()
-    calc.seed(solar_energy=Decimal("10"), import_energy=Decimal("5"), export_energy=Decimal("1"))
+    calc.seed(
+        solar_energy=Decimal("10"),
+        import_energy=Decimal("5"),
+        export_energy=Decimal("1"),
+    )
 
     calc.handle_grid_update(
         import_energy=Decimal("5"),
@@ -88,7 +96,11 @@ def test_export_revenue_waits_for_next_solar_update() -> None:
 def test_negative_export_price_reduces_export_revenue() -> None:
     """Negative export tariffs should reduce cumulative export revenue."""
     calc = SolarSavingsCalculator()
-    calc.seed(solar_energy=Decimal("100"), import_energy=Decimal("0"), export_energy=Decimal("0"))
+    calc.seed(
+        solar_energy=Decimal("100"),
+        import_energy=Decimal("0"),
+        export_energy=Decimal("0"),
+    )
 
     calc.handle_grid_update(
         import_energy=Decimal("0"),
@@ -106,7 +118,11 @@ def test_negative_export_price_reduces_export_revenue() -> None:
 def test_snapshot_roundtrip_preserves_totals() -> None:
     """Storage snapshots should survive reloads without losing accounting state."""
     calc = SolarSavingsCalculator()
-    calc.seed(solar_energy=Decimal("1"), import_energy=Decimal("1"), export_energy=Decimal("1"))
+    calc.seed(
+        solar_energy=Decimal("1"),
+        import_energy=Decimal("1"),
+        export_energy=Decimal("1"),
+    )
     calc.handle_solar_update(solar_energy=Decimal("2"), import_price=Decimal("0.40"))
 
     restored = SolarSavingsCalculator.from_dict(calc.as_dict())
@@ -131,7 +147,7 @@ def test_restore_public_value_uses_restored_source_value() -> None:
 def test_restore_public_value_ignores_invalid_and_unchanged_values() -> None:
     """RestoreSensor data should ignore non-numeric and unchanged values."""
     calc = SolarSavingsCalculator()
-    
+
     assert calc.restore_public_value("self_consumption_savings", "unavailable") is False
     assert calc.restore_public_value("self_consumption_savings", "0") is False
     assert calc.values.self_consumption_savings == Decimal("0")
@@ -143,3 +159,32 @@ def test_restore_does_not_set_derived_total_directly() -> None:
 
     assert calc.restore_public_value("total_savings", "99") is False
     assert calc.values.total_savings == Decimal("0")
+
+
+def test_solar_deltas_can_be_accumulated_before_accounting() -> None:
+    """Frequent solar readings should be grouped before monetary settlement."""
+    calc = SolarSavingsCalculator()
+    calc.seed(
+        solar_energy=Decimal("100"),
+        import_energy=Decimal("50"),
+        export_energy=Decimal("10"),
+    )
+
+    calc.handle_grid_update(
+        import_energy=Decimal("51"),
+        export_energy=Decimal("13"),
+        export_price=Decimal("0.08"),
+    )
+
+    assert calc.observe_solar_update(solar_energy=Decimal("102")) is True
+    assert calc.observe_solar_update(solar_energy=Decimal("105")) is True
+
+    assert calc.values.self_consumption_savings == Decimal("0")
+    assert calc.values.export_revenue == Decimal("0")
+
+    assert calc.settle_pending_accounting(import_price=Decimal("0.30")) is True
+
+    # Pending solar = 5 kWh; pending net export = 2 kWh.
+    assert calc.values.self_consumption_savings == Decimal("0.90")
+    assert calc.values.export_revenue == Decimal("0.16")
+    assert calc.values.total_savings == Decimal("1.06")
