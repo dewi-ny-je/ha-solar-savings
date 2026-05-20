@@ -16,7 +16,9 @@ from .const import (
     CONF_EXPORT_PRICE_SENSOR,
     CONF_IMPORT_ENERGY_SENSOR,
     CONF_IMPORT_PRICE_SENSOR,
+    CONF_MIN_ACCOUNTING_INTERVAL,
     CONF_SOLAR_ENERGY_SENSOR,
+    DEFAULT_MIN_ACCOUNTING_INTERVAL,
     DOMAIN,
 )
 
@@ -45,6 +47,19 @@ def _price_sensor_selector() -> selector.EntitySelector:
     return _sensor_selector()
 
 
+def _minimum_accounting_interval_selector() -> selector.NumberSelector:
+    """Select the minimum number of seconds between monetary settlements."""
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=0,
+            max=86400,
+            step=1,
+            mode="box",
+            unit_of_measurement="s",
+        )
+    )
+
+
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
@@ -53,6 +68,10 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_IMPORT_PRICE_SENSOR): _price_sensor_selector(),
         vol.Required(CONF_EXPORT_ENERGY_SENSOR): _energy_sensor_selector(),
         vol.Required(CONF_EXPORT_PRICE_SENSOR): _price_sensor_selector(),
+        vol.Optional(
+            CONF_MIN_ACCOUNTING_INTERVAL,
+            default=DEFAULT_MIN_ACCOUNTING_INTERVAL,
+        ): _minimum_accounting_interval_selector(),
     }
 )
 
@@ -79,7 +98,10 @@ def _entity_exists(hass: HomeAssistant, entity_id: str) -> bool:
     return True
 
 
-async def validate_input(hass: HomeAssistant, user_input: dict[str, Any]) -> dict[str, str]:
+async def validate_input(
+    hass: HomeAssistant,
+    user_input: dict[str, Any],
+) -> dict[str, str]:
     """Validate the user input allows setup.
 
     The selected entities may be template/utility-meter helpers, so validation is
@@ -95,7 +117,9 @@ async def validate_input(hass: HomeAssistant, user_input: dict[str, Any]) -> dic
     ]
     if len(entities) != len(set(entities)):
         return {"base": "duplicate_entity"}
-    missing = [entity_id for entity_id in entities if not _entity_exists(hass, entity_id)]
+    missing = [
+        entity_id for entity_id in entities if not _entity_exists(hass, entity_id)
+    ]
     if missing:
         return {"base": "entity_not_found"}
     return {}
@@ -189,6 +213,13 @@ class SolarSavingsOptionsFlow(config_entries.OptionsFlow):
                     CONF_EXPORT_PRICE_SENSOR,
                     default=current_config[CONF_EXPORT_PRICE_SENSOR],
                 ): _price_sensor_selector(),
+                vol.Optional(
+                    CONF_MIN_ACCOUNTING_INTERVAL,
+                    default=current_config.get(
+                        CONF_MIN_ACCOUNTING_INTERVAL,
+                        DEFAULT_MIN_ACCOUNTING_INTERVAL,
+                    ),
+                ): _minimum_accounting_interval_selector(),
             }
         )
 
