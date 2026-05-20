@@ -12,6 +12,9 @@ CONF_IMPORT_ENERGY_SENSOR: Final = "import_energy_sensor"
 CONF_IMPORT_PRICE_SENSOR: Final = "import_price_sensor"
 CONF_EXPORT_ENERGY_SENSOR: Final = "export_energy_sensor"
 CONF_EXPORT_PRICE_SENSOR: Final = "export_price_sensor"
+CONF_MIN_ACCOUNTING_INTERVAL: Final = "minimum_accounting_interval"
+
+DEFAULT_MIN_ACCOUNTING_INTERVAL: Final = 60
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY: Final = f"{DOMAIN}.state"
