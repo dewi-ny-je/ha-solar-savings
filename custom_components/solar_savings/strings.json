@@ -4,14 +4,15 @@
     "step": {
       "user": {
         "title": "Set up Solar Savings",
-        "description": "Choose the sensors used to calculate cumulative solar savings. Energy sensors should be kWh counters. Price sensors should expose the current import or export price per kWh in your configured currency.",
+        "description": "Choose the sensors used to calculate cumulative solar savings. Energy sensors should be kWh counters. Price sensors should expose the current import or export price per kWh in your configured currency. The minimum accounting interval is expressed in seconds; use 0 for immediate accounting on every solar update.",
         "data": {
           "name": "Name",
           "solar_energy_sensor": "Solar generation energy sensor",
           "import_energy_sensor": "Imported energy sensor",
           "import_price_sensor": "Import price sensor",
           "export_energy_sensor": "Exported energy sensor",
-          "export_price_sensor": "Export price sensor"
+          "export_price_sensor": "Export price sensor",
+          "minimum_accounting_interval": "Minimum accounting interval"
         }
       }
     },
@@ -27,14 +28,15 @@
     "step": {
       "init": {
         "title": "Configure Solar Savings",
-        "description": "Update the sensors used to calculate cumulative solar savings.",
+        "description": "Update the sensors used to calculate cumulative solar savings. The minimum accounting interval is expressed in seconds; use 0 for immediate accounting on every solar update.",
         "data": {
           "name": "Name",
           "solar_energy_sensor": "Solar generation energy sensor",
           "import_energy_sensor": "Imported energy sensor",
           "import_price_sensor": "Import price sensor",
           "export_energy_sensor": "Exported energy sensor",
-          "export_price_sensor": "Export price sensor"
+          "export_price_sensor": "Export price sensor",
+          "minimum_accounting_interval": "Minimum accounting interval"
         }
       }
     },
