@@ -41,7 +41,7 @@ self_consumption_savings += self_consumed_energy * import_price
 export_revenue += pending_export_revenue
 ```
 
-The settlement step can be throttled with **Minimum accounting interval**. This avoids creating an accounting boundary on every solar reading when solar and smart-meter energy sensors both update very frequently, for example every second. Solar readings are still observed continuously; only the conversion of accumulated energy deltas into monetary totals is deferred.
+The settlement step is throttled by **Minimum accounting interval**, which defaults (and it is recommended to be set) to **60 seconds** for both new and existing configurations that do not already store an explicit value. This avoids creating an accounting boundary on every solar reading when solar and smart-meter energy sensors both update very frequently, for example every second. Solar readings are still observed continuously; only the conversion of accumulated energy deltas into monetary totals is deferred.
 
 - `0 s` preserves immediate settlement on every solar-generation update.
 - A positive value, such as `60 s`, accumulates deltas and settles them no more frequently than that interval.
@@ -57,7 +57,7 @@ During setup, select five sensors and one accounting option:
 | Import price | currency/kWh | Current dynamic price paid for imported electricity. |
 | Exported energy | kWh | Smart meter export counter. |
 | Export price | currency/kWh | Current dynamic price received for exported electricity. |
-| Minimum accounting interval | seconds | Minimum spacing between monetary settlements. `0` keeps the legacy immediate-settlement behavior. |
+| Minimum accounting interval | seconds | Minimum spacing between monetary settlements. Defaults to `60`. Existing entries without an explicitly stored value also use `60`. Set it to `0` to restore immediate settlement on every solar reading. |
 
 The exposed savings sensors use Home Assistant's configured currency and are cumulative monetary totals with `device_class: monetary` and `state_class: total`, allowing Home Assistant's recorder/statistics pipeline to track them.
 
