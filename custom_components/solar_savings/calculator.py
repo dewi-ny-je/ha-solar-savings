@@ -48,6 +48,7 @@ class SolarSavingsSnapshot:
     last_export_energy: str | None = None
     pending_net_export_energy: str = "0"
     pending_export_revenue: str = "0"
+    pending_solar_energy: str = "0"
     self_consumption_savings: str = "0"
     export_revenue: str = "0"
 
@@ -114,7 +115,7 @@ class SolarSavingsCalculator:
         # total_savings is derived from the two source totals and should not be
         # restored directly, otherwise it could disagree with them.
         return False
-    
+
     @property
     def values(self) -> SolarSavingsValues:
         """Return current public sensor values."""
@@ -188,30 +189,54 @@ class SolarSavingsCalculator:
             changed = True
         return changed
 
-    def handle_solar_update(
+    def observe_solar_update(
         self,
         *,
         solar_energy: Decimal | None,
-        import_price: Decimal | None,
     ) -> bool:
-        """Process a solar generation update.
+        """Track a solar generation reading without performing monetary accounting.
 
-        Generated energy first offsets grid imports. Any net export that was
-        observed since the previous solar update is subtracted from the positive
-        solar delta. The remainder is valued using the current import price.
+        Solar readings may arrive as frequently as smart-meter readings. Every
+        valid reading updates the solar baseline so resets are handled promptly,
+        while only positive deltas are accumulated for later accounting.
         """
         previous_solar = to_decimal(self._snapshot.last_solar_energy)
         solar_delta = positive_delta(previous_solar, solar_energy)
+
+        changed = False
         if solar_energy is not None:
             self._snapshot.last_solar_energy = str(solar_energy)
+            changed = True
 
+        if solar_delta > ZERO:
+            pending_solar = Decimal(self._snapshot.pending_solar_energy)
+            self._snapshot.pending_solar_energy = str(pending_solar + solar_delta)
+            changed = True
+
+        return changed
+
+    def settle_pending_accounting(
+        self,
+        *,
+        import_price: Decimal | None,
+    ) -> bool:
+        """Convert pending solar/grid deltas into monetary savings and revenue.
+
+        The integration may defer this method to enforce a minimum accounting
+        interval. By that point, ``pending_solar_energy`` contains the sum of
+        all positive solar deltas observed since the previous settlement, and
+        the pending export fields contain smart-meter export accounting over
+        the same broad interval.
+        """
+        pending_solar = Decimal(self._snapshot.pending_solar_energy)
         pending_export = Decimal(self._snapshot.pending_net_export_energy)
         pending_export_revenue = Decimal(self._snapshot.pending_export_revenue)
-        self_consumed_energy = solar_delta - pending_export
+
+        self_consumed_energy = pending_solar - pending_export
         if self_consumed_energy < ZERO:
             self_consumed_energy = ZERO
 
-        changed = solar_energy is not None
+        changed = False
         if self_consumed_energy > ZERO and import_price is not None:
             self_savings = Decimal(self._snapshot.self_consumption_savings)
             self._snapshot.self_consumption_savings = str(
@@ -224,9 +249,31 @@ class SolarSavingsCalculator:
             self._snapshot.export_revenue = str(export_revenue + pending_export_revenue)
             changed = True
 
-        if pending_export > ZERO or pending_export_revenue != ZERO:
+        if (
+            pending_solar > ZERO
+            or pending_export > ZERO
+            or pending_export_revenue != ZERO
+        ):
+            self._snapshot.pending_solar_energy = "0"
             self._snapshot.pending_net_export_energy = "0"
             self._snapshot.pending_export_revenue = "0"
             changed = True
 
         return changed
+
+    def handle_solar_update(
+        self,
+        *,
+        solar_energy: Decimal | None,
+        import_price: Decimal | None,
+    ) -> bool:
+        """Process a solar update and settle accounting immediately.
+
+        This wrapper preserves the pre-throttling calculator API for tests and
+        callers that want the legacy behavior. The Home Assistant event layer
+        may instead call :meth:`observe_solar_update` continuously and defer
+        :meth:`settle_pending_accounting`.
+        """
+        observed = self.observe_solar_update(solar_energy=solar_energy)
+        settled = self.settle_pending_accounting(import_price=import_price)
+        return observed or settled
