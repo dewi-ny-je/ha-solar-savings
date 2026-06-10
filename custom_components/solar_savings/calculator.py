@@ -13,6 +13,11 @@ from typing import Any
 
 ZERO = Decimal("0")
 
+# Public cumulative totals that may be overwritten directly. The derived
+# ``total_savings`` value is intentionally excluded because it is always
+# recomputed from these two source totals.
+SETTABLE_VALUE_KEYS = ("self_consumption_savings", "export_revenue")
+
 
 def to_decimal(value: Any) -> Decimal | None:
     """Convert a Home Assistant state value into a Decimal, if possible."""
@@ -22,6 +27,28 @@ def to_decimal(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except (InvalidOperation, ValueError, TypeError):
         return None
+
+
+def to_finite_decimal(value: Any) -> Decimal | None:
+    """Convert a user-provided service value into a finite Decimal.
+
+    Unlike :func:`to_decimal`, strings and integers are passed to ``Decimal``
+    directly so the caller's exact precision is preserved; only floats fall back
+    to their shortest round-trip string form, which avoids binary rounding
+    artefacts. Booleans, non-numeric input, and non-finite values (NaN and
+    infinities) return ``None`` so the service layer can reject them before
+    anything is persisted.
+    """
+    if isinstance(value, bool):
+        return None
+    source: Any = str(value) if isinstance(value, float) else value
+    try:
+        candidate = Decimal(source)
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    if not candidate.is_finite():
+        return None
+    return candidate
 
 
 def positive_delta(previous: Decimal | None, current: Decimal | None) -> Decimal:
@@ -82,6 +109,25 @@ class SolarSavingsCalculator:
         """Return a JSON-serializable snapshot."""
         return asdict(self._snapshot)
 
+    def set_public_value(self, value_key: str, value: Decimal) -> bool:
+        """Overwrite a settable public cumulative total with an explicit value.
+
+        Returns ``True`` when the stored value actually changed so the caller
+        can decide whether to persist and notify. Raises ``ValueError`` for keys
+        that are not directly settable, such as the derived ``total_savings``.
+
+        Negative monetary totals are valid because negative energy prices can
+        make cumulative savings or revenue decrease below zero.
+        """
+        if value_key not in SETTABLE_VALUE_KEYS:
+            msg = f"{value_key!r} is not a settable public value"
+            raise ValueError(msg)
+
+        if Decimal(getattr(self._snapshot, value_key)) == value:
+            return False
+        setattr(self._snapshot, value_key, str(value))
+        return True
+
     def restore_public_value(self, value_key: str, value: Any) -> bool:
         """Restore a public cumulative value from Home Assistant state storage.
 
@@ -98,23 +144,12 @@ class SolarSavingsCalculator:
         if restored is None:
             return False
 
-        if value_key == "self_consumption_savings":
-            current = Decimal(self._snapshot.self_consumption_savings)
-            if restored != current:
-                self._snapshot.self_consumption_savings = str(restored)
-                return True
-            return False
-
-        if value_key == "export_revenue":
-            current = Decimal(self._snapshot.export_revenue)
-            if restored != current:
-                self._snapshot.export_revenue = str(restored)
-                return True
-            return False
-
         # total_savings is derived from the two source totals and should not be
         # restored directly, otherwise it could disagree with them.
-        return False
+        if value_key not in SETTABLE_VALUE_KEYS:
+            return False
+
+        return self.set_public_value(value_key, restored)
 
     @property
     def values(self) -> SolarSavingsValues:

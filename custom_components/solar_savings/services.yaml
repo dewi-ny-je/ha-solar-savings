@@ -1,0 +1,13 @@
+set_value:
+  target:
+    entity:
+      integration: solar_savings
+      domain: sensor
+  fields:
+    value:
+      required: true
+      example: 123.45
+      selector:
+        number:
+          mode: box
+          step: 0.01

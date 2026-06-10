@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from custom_components.solar_savings.calculator import (
     SolarSavingsCalculator,
     positive_delta,
     to_decimal,
+    to_finite_decimal,
 )
 
 
@@ -159,6 +162,75 @@ def test_restore_does_not_set_derived_total_directly() -> None:
 
     assert calc.restore_public_value("total_savings", "99") is False
     assert calc.values.total_savings == Decimal("0")
+
+
+def test_to_finite_decimal_preserves_string_precision() -> None:
+    """String input keeps exact precision instead of degrading through a float."""
+    assert to_finite_decimal("123.456789012345678") == Decimal("123.456789012345678")
+
+
+def test_to_finite_decimal_converts_numbers() -> None:
+    """Ints and floats are accepted as finite Decimals without artefacts."""
+    assert to_finite_decimal(100) == Decimal("100")
+    assert to_finite_decimal(123.45) == Decimal("123.45")
+    assert to_finite_decimal("-3.20") == Decimal("-3.20")
+
+
+def test_to_finite_decimal_rejects_non_finite() -> None:
+    """NaN and infinities must be rejected before they can be persisted."""
+    assert to_finite_decimal(float("nan")) is None
+    assert to_finite_decimal(float("inf")) is None
+    assert to_finite_decimal(float("-inf")) is None
+    assert to_finite_decimal("nan") is None
+    assert to_finite_decimal("inf") is None
+
+
+def test_to_finite_decimal_rejects_invalid_input() -> None:
+    """Non-numeric, empty, boolean, and missing inputs return None."""
+    assert to_finite_decimal("abc") is None
+    assert to_finite_decimal("") is None
+    assert to_finite_decimal(None) is None
+    assert to_finite_decimal(True) is None
+
+
+def test_set_public_value_overwrites_self_consumption_savings() -> None:
+    """Manually setting a source total replaces the stored value."""
+    calc = SolarSavingsCalculator()
+    calc.seed(
+        solar_energy=Decimal("1"),
+        import_energy=Decimal("1"),
+        export_energy=Decimal("1"),
+    )
+    calc.handle_solar_update(solar_energy=Decimal("5"), import_price=Decimal("0.30"))
+
+    assert calc.set_public_value("self_consumption_savings", Decimal("42.50")) is True
+    assert calc.values.self_consumption_savings == Decimal("42.50")
+    assert calc.values.export_revenue == Decimal("0")
+    assert calc.values.total_savings == Decimal("42.50")
+
+
+def test_set_public_value_accepts_negative_export_revenue() -> None:
+    """Export revenue can be set to a negative value to correct credits."""
+    calc = SolarSavingsCalculator()
+
+    assert calc.set_public_value("export_revenue", Decimal("-3.20")) is True
+    assert calc.values.export_revenue == Decimal("-3.20")
+    assert calc.values.total_savings == Decimal("-3.20")
+
+
+def test_set_public_value_unchanged_returns_false() -> None:
+    """Setting the current value reports no change so no save is scheduled."""
+    calc = SolarSavingsCalculator()
+
+    assert calc.set_public_value("self_consumption_savings", Decimal("0")) is False
+
+
+def test_set_public_value_rejects_derived_total() -> None:
+    """The derived total cannot be overwritten directly."""
+    calc = SolarSavingsCalculator()
+
+    with pytest.raises(ValueError, match="settable"):
+        calc.set_public_value("total_savings", Decimal("10"))
 
 
 def test_solar_deltas_can_be_accumulated_before_accounting() -> None:

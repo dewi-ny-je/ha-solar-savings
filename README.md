@@ -61,6 +61,28 @@ During setup, select five sensors and one accounting option:
 
 The exposed savings sensors use Home Assistant's configured currency and are cumulative monetary totals with `device_class: monetary` and `state_class: total`, allowing Home Assistant's recorder/statistics pipeline to track them.
 
+## Actions
+
+### `solar_savings.set_value`
+
+Overwrites the stored cumulative total of a Solar Savings sensor. This is useful to seed the integration with values carried over from a previous system, or to correct accumulated drift.
+
+| Field | Description |
+| --- | --- |
+| `value` | New cumulative monetary total, in the configured currency. Negative values are allowed; non-finite values (`NaN`/`∞`) are rejected. Pass the value as a quoted string to preserve exact decimal precision. |
+
+Target either the **Self-consumption savings** or the **Export revenue** sensor. The **Total savings** sensor is derived from those two totals and cannot be set directly; calling the action on it raises an error.
+
+```yaml
+action: solar_savings.set_value
+target:
+  entity_id: sensor.solar_savings_self_consumption_savings
+data:
+  value: 123.45
+```
+
+The new value is persisted immediately and the **Total savings** sensor is recalculated.
+
 ## Installation
 
 ### Manual installation
