@@ -57,5 +57,22 @@
         "name": "Total savings"
       }
     }
+  },
+  "services": {
+    "set_value": {
+      "name": "Set stored value",
+      "description": "Overwrites the stored cumulative total of a Solar Savings sensor, for example to initialise self-consumption savings or export revenue from a previous system, or to correct accumulated drift.",
+      "fields": {
+        "value": {
+          "name": "Value",
+          "description": "The new cumulative monetary total, in the configured currency."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "cannot_set_derived_value": {
+      "message": "{entity_id} is the derived total savings and cannot be set directly. Set the self-consumption savings and export revenue sensors instead."
+    }
   }
 }

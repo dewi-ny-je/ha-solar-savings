@@ -16,6 +16,9 @@ CONF_MIN_ACCOUNTING_INTERVAL: Final = "minimum_accounting_interval"
 
 DEFAULT_MIN_ACCOUNTING_INTERVAL: Final = 60
 
+SERVICE_SET_VALUE: Final = "set_value"
+ATTR_VALUE: Final = "value"
+
 STORAGE_VERSION: Final = 1
 STORAGE_KEY: Final = f"{DOMAIN}.state"
 STORAGE_SAVE_DELAY: Final = 10

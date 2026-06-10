@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
+
+import voluptuous as vol
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     RestoreSensor,
@@ -12,11 +15,23 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import entity_platform
+from homeassistant.helpers.dispatcher import (
+    async_dispatcher_connect,
+    async_dispatcher_send,
+)
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import SolarSavingsRuntimeData
-from .const import DOMAIN, SIGNAL_UPDATED, STORAGE_SAVE_DELAY
+from .calculator import SETTABLE_VALUE_KEYS
+from .const import (
+    ATTR_VALUE,
+    DOMAIN,
+    SERVICE_SET_VALUE,
+    SIGNAL_UPDATED,
+    STORAGE_SAVE_DELAY,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -60,6 +75,13 @@ async def async_setup_entry(
     async_add_entities(
         SolarSavingsSensor(hass, entry, description)
         for description in SENSOR_DESCRIPTIONS
+    )
+
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(
+        SERVICE_SET_VALUE,
+        {vol.Required(ATTR_VALUE): vol.Coerce(float)},
+        "async_set_value",
     )
 
 
@@ -118,3 +140,26 @@ class SolarSavingsSensor(RestoreSensor, SensorEntity):
     def _handle_update(self) -> None:
         """Write updated value to Home Assistant."""
         self.async_write_ha_state()
+
+    async def async_set_value(self, value: float) -> None:
+        """Overwrite this sensor's stored cumulative total.
+
+        Exposed as the ``solar_savings.set_value`` action so users can
+        initialise the integration with totals from a previous system or
+        correct accumulated drift. The derived total savings sensor is rejected
+        because it is recomputed from the two source totals.
+        """
+        value_key = self.entity_description.value_key
+        if value_key not in SETTABLE_VALUE_KEYS:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="cannot_set_derived_value",
+                translation_placeholders={"entity_id": self.entity_id},
+            )
+
+        data: SolarSavingsRuntimeData = self.entry.runtime_data
+        if data.calculator.set_public_value(value_key, Decimal(str(value))):
+            data.store.async_delay_save(data.calculator.as_dict, STORAGE_SAVE_DELAY)
+            async_dispatcher_send(
+                self.hass, f"{SIGNAL_UPDATED}_{self.entry.entry_id}"
+            )
