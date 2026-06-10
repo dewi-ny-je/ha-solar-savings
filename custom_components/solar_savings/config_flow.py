@@ -133,10 +133,10 @@ class SolarSavingsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
+        _config_entry: config_entries.ConfigEntry,
     ) -> config_entries.OptionsFlow:
         """Create the options flow."""
-        return SolarSavingsOptionsFlow(config_entry)
+        return SolarSavingsOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -168,19 +168,15 @@ class SolarSavingsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
 
-class SolarSavingsOptionsFlow(config_entries.OptionsFlow):
+class SolarSavingsOptionsFlow(config_entries.OptionsFlowWithReload):
     """Handle options for Solar Savings."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self._config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
         """Manage Solar Savings options."""
         errors: dict[str, str] = {}
-        current_config = {**self._config_entry.data, **self._config_entry.options}
+        current_config = {**self.config_entry.data, **self.config_entry.options}
 
         if user_input is not None:
             errors = await validate_input(self.hass, user_input)
