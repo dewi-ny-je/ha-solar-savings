@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+from enum import IntFlag
 from typing import Final
 
 DOMAIN: Final = "solar_savings"
 PLATFORMS: Final = ["sensor"]
+
+
+class SolarSavingsEntityFeature(IntFlag):
+    """Supported features for Solar Savings entities."""
+
+    SET_VALUE = 1
+
 
 CONF_SOLAR_ENERGY_SENSOR: Final = "solar_energy_sensor"
 CONF_IMPORT_ENERGY_SENSOR: Final = "import_energy_sensor"

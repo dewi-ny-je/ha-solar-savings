@@ -30,6 +30,7 @@ from .const import (
     SERVICE_SET_VALUE,
     SIGNAL_UPDATED,
     STORAGE_SAVE_DELAY,
+    SolarSavingsEntityFeature,
 )
 
 
@@ -83,6 +84,11 @@ async def async_setup_entry(
         # exact precision is preserved and the payload stays JSON-serializable.
         {vol.Required(ATTR_VALUE): vol.Any(int, float, str)},
         "async_set_value",
+        # Restrict the action to the settable source sensors. Home Assistant
+        # applies this filter before invoking any handler, so targeting a
+        # device or area skips the derived total sensor and an explicit target
+        # of it is rejected up front, never mutating siblings on a failed call.
+        required_features=[SolarSavingsEntityFeature.SET_VALUE],
     )
 
 
@@ -102,6 +108,8 @@ class SolarSavingsSensor(RestoreSensor, SensorEntity):
         self.hass = hass
         self.entry = entry
         self.entity_description = description
+        if description.value_key in SETTABLE_VALUE_KEYS:
+            self._attr_supported_features = SolarSavingsEntityFeature.SET_VALUE
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
@@ -147,8 +155,10 @@ class SolarSavingsSensor(RestoreSensor, SensorEntity):
 
         Exposed as the ``solar_savings.set_value`` action so users can
         initialise the integration with totals from a previous system or
-        correct accumulated drift. The derived total savings sensor is rejected
-        because it is recomputed from the two source totals.
+        correct accumulated drift. The ``required_features`` filter on the
+        service registration keeps the derived total savings sensor out of the
+        target before any handler runs; the guard below is defence-in-depth for
+        direct calls and never mutates state when it rejects.
         """
         value_key = self.entity_description.value_key
         if value_key not in SETTABLE_VALUE_KEYS:
@@ -169,6 +179,4 @@ class SolarSavingsSensor(RestoreSensor, SensorEntity):
         data: SolarSavingsRuntimeData = self.entry.runtime_data
         if data.calculator.set_public_value(value_key, decimal_value):
             data.store.async_delay_save(data.calculator.as_dict, STORAGE_SAVE_DELAY)
-            async_dispatcher_send(
-                self.hass, f"{SIGNAL_UPDATED}_{self.entry.entry_id}"
-            )
+            async_dispatcher_send(self.hass, f"{SIGNAL_UPDATED}_{self.entry.entry_id}")
