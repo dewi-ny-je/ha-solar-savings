@@ -73,6 +73,9 @@
   "exceptions": {
     "cannot_set_derived_value": {
       "message": "{entity_id} is the derived total savings and cannot be set directly. Set the self-consumption savings and export revenue sensors instead."
+    },
+    "invalid_value": {
+      "message": "\"{value}\" is not a valid amount. Provide a finite number in the configured currency."
     }
   }
 }

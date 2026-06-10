@@ -69,7 +69,7 @@ Overwrites the stored cumulative total of a Solar Savings sensor. This is useful
 
 | Field | Description |
 | --- | --- |
-| `value` | New cumulative monetary total, in the configured currency. Negative values are allowed. |
+| `value` | New cumulative monetary total, in the configured currency. Negative values are allowed; non-finite values (`NaN`/`∞`) are rejected. Pass the value as a quoted string to preserve exact decimal precision. |
 
 Target either the **Self-consumption savings** or the **Export revenue** sensor. The **Total savings** sensor is derived from those two totals and cannot be set directly; calling the action on it raises an error.
 

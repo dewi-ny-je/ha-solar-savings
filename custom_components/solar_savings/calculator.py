@@ -29,6 +29,28 @@ def to_decimal(value: Any) -> Decimal | None:
         return None
 
 
+def to_finite_decimal(value: Any) -> Decimal | None:
+    """Convert a user-provided service value into a finite Decimal.
+
+    Unlike :func:`to_decimal`, strings and integers are passed to ``Decimal``
+    directly so the caller's exact precision is preserved; only floats fall back
+    to their shortest round-trip string form, which avoids binary rounding
+    artefacts. Booleans, non-numeric input, and non-finite values (NaN and
+    infinities) return ``None`` so the service layer can reject them before
+    anything is persisted.
+    """
+    if isinstance(value, bool):
+        return None
+    source: Any = str(value) if isinstance(value, float) else value
+    try:
+        candidate = Decimal(source)
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    if not candidate.is_finite():
+        return None
+    return candidate
+
+
 def positive_delta(previous: Decimal | None, current: Decimal | None) -> Decimal:
     """Return a positive meter delta, ignoring resets and invalid values.
 

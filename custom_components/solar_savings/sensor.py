@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
 
 import voluptuous as vol
 from homeassistant.components.sensor import (
@@ -24,7 +23,7 @@ from homeassistant.helpers.dispatcher import (
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import SolarSavingsRuntimeData
-from .calculator import SETTABLE_VALUE_KEYS
+from .calculator import SETTABLE_VALUE_KEYS, to_finite_decimal
 from .const import (
     ATTR_VALUE,
     DOMAIN,
@@ -80,7 +79,9 @@ async def async_setup_entry(
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
         SERVICE_SET_VALUE,
-        {vol.Required(ATTR_VALUE): vol.Coerce(float)},
+        # Accept the raw number/string and build the Decimal in the handler so
+        # exact precision is preserved and the payload stays JSON-serializable.
+        {vol.Required(ATTR_VALUE): vol.Any(int, float, str)},
         "async_set_value",
     )
 
@@ -141,7 +142,7 @@ class SolarSavingsSensor(RestoreSensor, SensorEntity):
         """Write updated value to Home Assistant."""
         self.async_write_ha_state()
 
-    async def async_set_value(self, value: float) -> None:
+    async def async_set_value(self, value: float | str) -> None:
         """Overwrite this sensor's stored cumulative total.
 
         Exposed as the ``solar_savings.set_value`` action so users can
@@ -157,8 +158,16 @@ class SolarSavingsSensor(RestoreSensor, SensorEntity):
                 translation_placeholders={"entity_id": self.entity_id},
             )
 
+        decimal_value = to_finite_decimal(value)
+        if decimal_value is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="invalid_value",
+                translation_placeholders={"value": str(value)},
+            )
+
         data: SolarSavingsRuntimeData = self.entry.runtime_data
-        if data.calculator.set_public_value(value_key, Decimal(str(value))):
+        if data.calculator.set_public_value(value_key, decimal_value):
             data.store.async_delay_save(data.calculator.as_dict, STORAGE_SAVE_DELAY)
             async_dispatcher_send(
                 self.hass, f"{SIGNAL_UPDATED}_{self.entry.entry_id}"

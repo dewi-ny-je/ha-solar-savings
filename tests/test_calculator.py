@@ -10,6 +10,7 @@ from custom_components.solar_savings.calculator import (
     SolarSavingsCalculator,
     positive_delta,
     to_decimal,
+    to_finite_decimal,
 )
 
 
@@ -161,6 +162,35 @@ def test_restore_does_not_set_derived_total_directly() -> None:
 
     assert calc.restore_public_value("total_savings", "99") is False
     assert calc.values.total_savings == Decimal("0")
+
+
+def test_to_finite_decimal_preserves_string_precision() -> None:
+    """String input keeps exact precision instead of degrading through a float."""
+    assert to_finite_decimal("123.456789012345678") == Decimal("123.456789012345678")
+
+
+def test_to_finite_decimal_converts_numbers() -> None:
+    """Ints and floats are accepted as finite Decimals without artefacts."""
+    assert to_finite_decimal(100) == Decimal("100")
+    assert to_finite_decimal(123.45) == Decimal("123.45")
+    assert to_finite_decimal("-3.20") == Decimal("-3.20")
+
+
+def test_to_finite_decimal_rejects_non_finite() -> None:
+    """NaN and infinities must be rejected before they can be persisted."""
+    assert to_finite_decimal(float("nan")) is None
+    assert to_finite_decimal(float("inf")) is None
+    assert to_finite_decimal(float("-inf")) is None
+    assert to_finite_decimal("nan") is None
+    assert to_finite_decimal("inf") is None
+
+
+def test_to_finite_decimal_rejects_invalid_input() -> None:
+    """Non-numeric, empty, boolean, and missing inputs return None."""
+    assert to_finite_decimal("abc") is None
+    assert to_finite_decimal("") is None
+    assert to_finite_decimal(None) is None
+    assert to_finite_decimal(True) is None
 
 
 def test_set_public_value_overwrites_self_consumption_savings() -> None:
