@@ -1,0 +1,118 @@
+name: Release
+
+# yamllint disable-line rule:truthy
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version part to bump, or auto to read the commit messages
+        required: false
+        default: auto
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+      initial_version:
+        description: Version to release when there is no release tag yet
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: Work out the next version without publishing a release
+        required: false
+        default: false
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The whole history and every tag, the next version is worked out
+          # from the commits since the most recent release tag.
+          fetch-depth: 0
+          fetch-tags: true
+          # The version is committed back to the branch before it is tagged.
+          persist-credentials: true
+
+      - name: Work out the next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump || 'auto' }}
+          INITIAL_VERSION: ${{ inputs.initial_version }}
+        run: |
+          python3 .github/scripts/next_version.py \
+            --bump "${BUMP}" \
+            --initial-version "${INITIAL_VERSION}" \
+            --notes-file release-notes.md
+
+      - name: Summarise
+        if: steps.version.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          BUMP: ${{ steps.version.outputs.bump }}
+          COMMITS: ${{ steps.version.outputs.commits }}
+          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+        run: |
+          {
+            echo "## ${TAG} (${BUMP})"
+            echo
+            echo "${COMMITS} commits since ${PREVIOUS_TAG:-the start of the history}."
+            echo
+            cat release-notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # HACS downloads the source of the tagged commit, so the version the
+      # integration reports is whatever the manifest holds at that commit.
+      - name: Commit the version to the manifest
+        id: commit
+        if: steps.version.outputs.release == 'true' && inputs.dry_run != true
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          package=$(find custom_components -mindepth 1 -maxdepth 1 -type d \
+            -not -name '__pycache__' -printf '%f\n' | sort | head -1)
+          manifest="custom_components/${package}/manifest.json"
+          jq --arg version "${VERSION}" '.version = $version' \
+            "${manifest}" > "${manifest}.new"
+          mv "${manifest}.new" "${manifest}"
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- "${manifest}"; then
+            echo "The manifest already declares ${VERSION}."
+          else
+            git add "${manifest}"
+            git commit -m "chore(release): ${TAG}"
+            # Pushed with GITHUB_TOKEN, which does not start another run.
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Create the release
+        if: steps.version.outputs.release == 'true' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          TARGET: ${{ steps.commit.outputs.sha }}
+        run: |
+          gh release create "$TAG" \
+            --target "$TARGET" \
+            --title "$TAG" \
+            --notes-file release-notes.md
