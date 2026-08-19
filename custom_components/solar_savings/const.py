@@ -16,10 +16,15 @@ class SolarSavingsEntityFeature(IntFlag):
 
 
 CONF_SOLAR_ENERGY_SENSOR: Final = "solar_energy_sensor"
-CONF_IMPORT_ENERGY_SENSOR: Final = "import_energy_sensor"
 CONF_IMPORT_PRICE_SENSOR: Final = "import_price_sensor"
 CONF_EXPORT_ENERGY_SENSOR: Final = "export_energy_sensor"
 CONF_EXPORT_PRICE_SENSOR: Final = "export_price_sensor"
+
+# Selected by config entry version 1, when self-consumption was derived from
+# net export instead of from the energy balance. Kept so the migration can
+# strip it from existing entries.
+CONF_IMPORT_ENERGY_SENSOR: Final = "import_energy_sensor"
+
 CONF_ACCOUNTING_INTERVAL: Final = "accounting_interval"
 
 # Key used before the accounting interval became a fixed settlement period
@@ -28,6 +33,8 @@ CONF_ACCOUNTING_INTERVAL: Final = "accounting_interval"
 CONF_MIN_ACCOUNTING_INTERVAL: Final = "minimum_accounting_interval"
 
 DEFAULT_ACCOUNTING_INTERVAL: Final = 60
+
+CONFIG_ENTRY_VERSION: Final = 2
 
 SERVICE_SET_VALUE: Final = "set_value"
 ATTR_VALUE: Final = "value"

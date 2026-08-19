@@ -9,10 +9,14 @@ from custom_components.solar_savings import (
     _WARNED_UNITS_BY_ENTITY,
     energy_to_kwh,
     resolve_accounting_interval,
+    unique_id_for,
 )
 from custom_components.solar_savings.const import (
     CONF_ACCOUNTING_INTERVAL,
+    CONF_EXPORT_ENERGY_SENSOR,
+    CONF_IMPORT_ENERGY_SENSOR,
     CONF_MIN_ACCOUNTING_INTERVAL,
+    CONF_SOLAR_ENERGY_SENSOR,
     DEFAULT_ACCOUNTING_INTERVAL,
 )
 
@@ -114,3 +118,14 @@ def test_resolve_accounting_interval_defaults_and_clamps() -> None:
         DEFAULT_ACCOUNTING_INTERVAL
     )
     assert resolve_accounting_interval({CONF_ACCOUNTING_INTERVAL: -5}) == 0.0
+
+
+def test_unique_id_ignores_the_removed_import_sensor() -> None:
+    """The unique ID is built from the two energy sensors still in use."""
+    config = {
+        CONF_SOLAR_ENERGY_SENSOR: "sensor.solar",
+        CONF_EXPORT_ENERGY_SENSOR: "sensor.export",
+        CONF_IMPORT_ENERGY_SENSOR: "sensor.import",
+    }
+
+    assert unique_id_for(config) == "sensor.solar|sensor.export"

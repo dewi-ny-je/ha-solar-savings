@@ -4,11 +4,10 @@
     "step": {
       "user": {
         "title": "Set up Solar Savings",
-        "description": "Choose the sensors used to calculate cumulative solar savings. Energy sensors should be kWh counters. Price sensors should expose the current import or export price per kWh in your configured currency. The accounting interval is expressed in seconds: accumulated energy is valued once per interval, and also whenever an import or export tariff changes, using the tariff that applied before the change. Use 0 to value energy on every sensor update.",
+        "description": "Choose the sensors used to calculate cumulative solar savings. Energy sensors should be kWh counters. Self-consumption is the generated energy that was not exported, so no imported-energy sensor is needed. Price sensors should expose the current import or export price per kWh in your configured currency. The accounting interval is expressed in seconds: accumulated energy is valued once per interval, and also whenever an import or export tariff changes, using the tariff that applied before the change. Use 0 to value energy on every sensor update.",
         "data": {
           "name": "Name",
           "solar_energy_sensor": "Solar generation energy sensor",
-          "import_energy_sensor": "Imported energy sensor",
           "import_price_sensor": "Import price sensor",
           "export_energy_sensor": "Exported energy sensor",
           "export_price_sensor": "Export price sensor",
@@ -32,7 +31,6 @@
         "data": {
           "name": "Name",
           "solar_energy_sensor": "Solar generation energy sensor",
-          "import_energy_sensor": "Imported energy sensor",
           "import_price_sensor": "Import price sensor",
           "export_energy_sensor": "Exported energy sensor",
           "export_price_sensor": "Export price sensor",

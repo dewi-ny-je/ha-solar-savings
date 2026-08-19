@@ -15,6 +15,7 @@ from .const import (
     CONF_IMPORT_ENERGY_SENSOR,
     CONF_IMPORT_PRICE_SENSOR,
     CONF_MIN_ACCOUNTING_INTERVAL,
+    CONFIG_ENTRY_VERSION,
     CONF_SOLAR_ENERGY_SENSOR,
     DEFAULT_ACCOUNTING_INTERVAL,
     SIGNAL_UPDATED,
@@ -81,6 +82,13 @@ def resolve_accounting_interval(config: Mapping[str, Any]) -> float:
     return max(interval, 0.0)
 
 
+def unique_id_for(config: Mapping[str, Any]) -> str:
+    """Build the config entry unique ID from the selected energy sensors."""
+    return "|".join(
+        [config[CONF_SOLAR_ENERGY_SENSOR], config[CONF_EXPORT_ENERGY_SENSOR]]
+    )
+
+
 def energy_to_kwh(state: Any | None) -> Decimal | None:
     """Convert an energy sensor state to kWh."""
     if state is None:
@@ -108,6 +116,40 @@ def energy_to_kwh(state: Any | None) -> Decimal | None:
     return value * factor
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate a config entry to the current version.
+
+    Version 1 entries select an imported-energy sensor. Self-consumption is now
+    ``solar - export``, which never reads the import register, so the selection
+    is dropped and the unique ID is rebuilt from the two sensors that remain.
+    """
+    if entry.version > CONFIG_ENTRY_VERSION:
+        # Downgrades are not supported; leave the entry alone.
+        return False
+
+    if entry.version == 1:
+        data = {
+            key: value
+            for key, value in entry.data.items()
+            if key != CONF_IMPORT_ENERGY_SENSOR
+        }
+        options = {
+            key: value
+            for key, value in entry.options.items()
+            if key != CONF_IMPORT_ENERGY_SENSOR
+        }
+        config = {**data, **options}
+        hass.config_entries.async_update_entry(
+            entry,
+            data=data,
+            options=options,
+            unique_id=unique_id_for(config),
+            version=CONFIG_ENTRY_VERSION,
+        )
+
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Solar Savings from a config entry."""
     from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
@@ -128,11 +170,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     accounting_interval = resolve_accounting_interval(config)
 
     solar_state = hass.states.get(config[CONF_SOLAR_ENERGY_SENSOR])
-    import_state = hass.states.get(config[CONF_IMPORT_ENERGY_SENSOR])
     export_state = hass.states.get(config[CONF_EXPORT_ENERGY_SENSOR])
     calculator.seed(
         solar_energy=energy_to_kwh(solar_state),
-        import_energy=energy_to_kwh(import_state),
         export_energy=energy_to_kwh(export_state),
     )
 
@@ -213,11 +253,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
     @callback
-    def handle_grid_event(_event: Event) -> None:
-        import_state = hass.states.get(config[CONF_IMPORT_ENERGY_SENSOR])
+    def handle_export_event(_event: Event) -> None:
         export_state = hass.states.get(config[CONF_EXPORT_ENERGY_SENSOR])
-        if calculator.handle_grid_update(
-            import_energy=energy_to_kwh(import_state),
+        if calculator.observe_export_update(
             export_energy=energy_to_kwh(export_state),
         ):
             async_schedule_accounting()
@@ -257,11 +295,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         [
             async_track_state_change_event(
                 hass,
-                [
-                    config[CONF_IMPORT_ENERGY_SENSOR],
-                    config[CONF_EXPORT_ENERGY_SENSOR],
-                ],
-                handle_grid_event,
+                [config[CONF_EXPORT_ENERGY_SENSOR]],
+                handle_export_event,
             ),
             async_track_state_change_event(
                 hass,

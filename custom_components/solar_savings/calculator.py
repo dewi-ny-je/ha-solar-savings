@@ -71,9 +71,8 @@ class SolarSavingsSnapshot:
     """Serializable state for Solar Savings accounting."""
 
     last_solar_energy: str | None = None
-    last_import_energy: str | None = None
     last_export_energy: str | None = None
-    pending_net_export_energy: str = "0"
+    pending_export_energy: str = "0"
     pending_solar_energy: str = "0"
     unallocated_export_energy: str = "0"
     self_consumption_savings: str = "0"
@@ -100,16 +99,25 @@ class SolarSavingsCalculator:
     def from_dict(cls, data: dict[str, Any] | None) -> SolarSavingsCalculator:
         """Create a calculator from storage data.
 
-        Snapshots written before monetary valuation moved to settlement time
-        carry a ``pending_export_revenue`` field that no longer exists. Its
-        value was already valued at the tariff in force when it was earned, so
-        it is folded into the cumulative export revenue instead of being
-        dropped.
+        Two fields from older snapshots no longer exist:
+
+        ``pending_export_revenue`` was already valued at the tariff in force
+        when it was earned, so it is folded into the cumulative export revenue
+        instead of being dropped. ``pending_net_export_energy`` held export
+        energy awaiting allocation, which is now tracked gross, so it carries
+        over into ``pending_export_energy``.
+
+        ``last_import_energy`` is simply ignored: the import register is no
+        longer part of the model.
         """
         if not data:
             return cls()
         allowed = SolarSavingsSnapshot.__dataclass_fields__.keys()
         snapshot_data = {key: data[key] for key in allowed if key in data}
+        if "pending_export_energy" not in snapshot_data:
+            legacy_pending = data.get("pending_net_export_energy")
+            if legacy_pending is not None:
+                snapshot_data["pending_export_energy"] = legacy_pending
         calculator = cls(SolarSavingsSnapshot(**snapshot_data))
         legacy_revenue = to_decimal(data.get("pending_export_revenue"))
         if legacy_revenue is not None and legacy_revenue != ZERO:
@@ -180,7 +188,6 @@ class SolarSavingsCalculator:
         self,
         *,
         solar_energy: Decimal | None,
-        import_energy: Decimal | None,
         export_energy: Decimal | None,
     ) -> None:
         """Set initial baselines without creating revenue.
@@ -190,48 +197,35 @@ class SolarSavingsCalculator:
         """
         if solar_energy is not None and self._snapshot.last_solar_energy is None:
             self._snapshot.last_solar_energy = str(solar_energy)
-        if import_energy is not None and self._snapshot.last_import_energy is None:
-            self._snapshot.last_import_energy = str(import_energy)
         if export_energy is not None and self._snapshot.last_export_energy is None:
             self._snapshot.last_export_energy = str(export_energy)
 
-    def handle_grid_update(
+    def observe_export_update(
         self,
         *,
-        import_energy: Decimal | None,
         export_energy: Decimal | None,
     ) -> bool:
-        """Process a smart meter import/export update.
+        """Track the smart meter's export register without valuing it.
 
-        Import/export meters often update much more frequently than solar
-        production meters. For each reading we calculate positive net export as
-        ``export_delta - import_delta`` and accumulate the *energy* only. The
-        clamp at zero is per reading, so it cannot be reconstructed from the
-        meter values at the interval boundaries and has to stay here.
+        Export meters often update much more frequently than solar production
+        meters. Every valid reading updates the baseline so resets are handled
+        promptly, and only positive deltas are accumulated for later
+        accounting.
 
-        No tariff is applied at this point: revenue is linear in energy, so
-        while the export tariff is constant it is equivalent - and much
-        cheaper - to value the accumulated energy once, in
+        No tariff is applied here: revenue is linear in energy, so while the
+        export tariff is constant it is equivalent - and much cheaper - to
+        value the accumulated energy once, in
         :meth:`settle_pending_accounting`.
         """
-        previous_import = to_decimal(self._snapshot.last_import_energy)
         previous_export = to_decimal(self._snapshot.last_export_energy)
-
-        import_delta = positive_delta(previous_import, import_energy)
         export_delta = positive_delta(previous_export, export_energy)
-        net_export = export_delta - import_delta
-        if net_export < ZERO:
-            net_export = ZERO
 
         changed = False
-        if net_export > ZERO:
-            pending_energy = Decimal(self._snapshot.pending_net_export_energy)
-            self._snapshot.pending_net_export_energy = str(pending_energy + net_export)
+        if export_delta > ZERO:
+            pending_energy = Decimal(self._snapshot.pending_export_energy)
+            self._snapshot.pending_export_energy = str(pending_energy + export_delta)
             changed = True
 
-        if import_energy is not None:
-            self._snapshot.last_import_energy = str(import_energy)
-            changed = True
         if export_energy is not None:
             self._snapshot.last_export_energy = str(export_energy)
             changed = True
@@ -269,18 +263,24 @@ class SolarSavingsCalculator:
         import_price: Decimal | None,
         export_price: Decimal | None,
     ) -> bool:
-        """Convert pending solar/grid energy into monetary savings and revenue.
+        """Convert pending solar/export energy into savings and revenue.
 
         This is the only place where energy is valued. The caller decides when
         a settlement happens: once per configured accounting interval, or
         immediately before a tariff change is applied, in which case it passes
         the tariffs that were in force *before* the change.
 
-        ``pending_solar_energy`` holds the sum of the positive solar deltas
-        observed since the previous settlement and ``pending_net_export_energy``
-        the positive net export over the same window.
+        Assuming every exported kWh came from the panels, energy conservation
+        over any window gives ``solar + import = load + export``, so
+        ``solar - export`` is exactly the part of the load that solar served.
+        Both registers only ever increase, so their deltas are additive and
+        the split does not depend on where the settlement boundaries fall.
 
-        Net export can be observed before the slower solar counter reports the
+        ``pending_solar_energy`` holds the sum of the positive solar deltas
+        observed since the previous settlement and ``pending_export_energy``
+        the exported energy over the same window.
+
+        Export is often observed before the slower solar counter reports the
         generation that produced it. Export energy that no solar reading covers
         yet is therefore carried over in ``unallocated_export_energy`` and
         subtracted from the next settlement's generation, so a settlement that
@@ -293,7 +293,7 @@ class SolarSavingsCalculator:
         next settlement that has a price.
         """
         pending_solar = Decimal(self._snapshot.pending_solar_energy)
-        pending_export = Decimal(self._snapshot.pending_net_export_energy)
+        pending_export = Decimal(self._snapshot.pending_export_energy)
         carried_export = Decimal(self._snapshot.unallocated_export_energy)
 
         self_consumed_energy = pending_solar - (pending_export + carried_export)
@@ -325,7 +325,7 @@ class SolarSavingsCalculator:
 
         if pending_solar > ZERO or pending_export > ZERO:
             self._snapshot.pending_solar_energy = "0"
-            self._snapshot.pending_net_export_energy = "0"
+            self._snapshot.pending_export_energy = "0"
             changed = True
 
         if carried_export != Decimal(self._snapshot.unallocated_export_energy):

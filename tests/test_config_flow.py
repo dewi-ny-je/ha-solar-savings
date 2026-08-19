@@ -6,7 +6,6 @@ from custom_components.solar_savings.config_flow import validate_input
 from custom_components.solar_savings.const import (
     CONF_EXPORT_ENERGY_SENSOR,
     CONF_EXPORT_PRICE_SENSOR,
-    CONF_IMPORT_ENERGY_SENSOR,
     CONF_IMPORT_PRICE_SENSOR,
     CONF_SOLAR_ENERGY_SENSOR,
 )
@@ -19,7 +18,6 @@ async def test_validate_input_accepts_registered_entity_without_state(hass) -> N
 
     entity_ids = [
         "sensor.solar_energy",
-        "sensor.import_energy",
         "sensor.import_price",
         "sensor.export_energy",
         "sensor.export_price",
@@ -37,7 +35,6 @@ async def test_validate_input_accepts_registered_entity_without_state(hass) -> N
         hass,
         {
             CONF_SOLAR_ENERGY_SENSOR: "sensor.solar_energy",
-            CONF_IMPORT_ENERGY_SENSOR: "sensor.import_energy",
             CONF_IMPORT_PRICE_SENSOR: "sensor.import_price",
             CONF_EXPORT_ENERGY_SENSOR: "sensor.export_energy",
             CONF_EXPORT_PRICE_SENSOR: "sensor.export_price",
@@ -58,7 +55,7 @@ async def test_validate_input_rejects_disabled_registered_entity(hass) -> None:
         disabled_by=er.RegistryEntryDisabler.USER,
     )
 
-    for object_id in ("import_energy", "import_price", "export_energy", "export_price"):
+    for object_id in ("import_price", "export_energy", "export_price"):
         registry.async_get_or_create(
             "sensor",
             "test",
@@ -70,7 +67,6 @@ async def test_validate_input_rejects_disabled_registered_entity(hass) -> None:
         hass,
         {
             CONF_SOLAR_ENERGY_SENSOR: "sensor.solar_energy",
-            CONF_IMPORT_ENERGY_SENSOR: "sensor.import_energy",
             CONF_IMPORT_PRICE_SENSOR: "sensor.import_price",
             CONF_EXPORT_ENERGY_SENSOR: "sensor.export_energy",
             CONF_EXPORT_PRICE_SENSOR: "sensor.export_price",
