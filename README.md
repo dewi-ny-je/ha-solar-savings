@@ -18,10 +18,11 @@ Solar energy is assumed to be consumed in this order:
 
 The integration listens continuously to:
 
-- smart-meter import/export counter changes, and
-- solar-generation counter changes.
+- smart-meter import/export counter changes,
+- solar-generation counter changes, and
+- import/export tariff changes.
 
-For every smart-meter update it accumulates **positive net export**:
+Meter readings only accumulate **energy**. For every smart-meter update it accumulates **positive net export**:
 
 ```text
 net_export = max(export_delta - import_delta, 0)
@@ -33,18 +34,38 @@ For every solar-generation update it updates the solar baseline immediately, so 
 pending_solar_energy += max(solar_energy - previous_solar_energy, 0)
 ```
 
-Monetary accounting is then settled using the accumulated solar and smart-meter deltas:
+### When energy is valued
+
+Revenue is linear in energy, so while a tariff is constant `sum(energy_i) * price` equals `sum(energy_i * price)`. Valuing every single reading is therefore redundant work - and a stored-state write every few seconds. Accumulated energy is instead converted into money at a **settlement**, which happens:
+
+- once per **accounting interval**, armed by the first meter reading after the previous settlement, and
+- immediately **before an import or export tariff change is applied**, using the tariff that was in force before the change.
+
+A settlement values the accumulated energy:
 
 ```text
-self_consumed_energy = max(pending_solar_energy - pending_net_export, 0)
+self_consumed_energy = max(pending_solar_energy - pending_net_export_energy, 0)
 self_consumption_savings += self_consumed_energy * import_price
-export_revenue += pending_export_revenue
+export_revenue += pending_net_export_energy * export_price
 ```
 
-The settlement step is throttled by **Minimum accounting interval**, which defaults (and it is recommended to be set) to **60 seconds** for both new and existing configurations that do not already store an explicit value. This avoids creating an accounting boundary on every solar reading when solar and smart-meter energy sensors both update very frequently, for example every second. Solar readings are still observed continuously; only the conversion of accumulated energy deltas into monetary totals is deferred.
+Settlements are also the only point where the savings sensors are written and the accounting snapshot is persisted, so a busy smart meter no longer causes a stored-state write every few seconds. Pending energy is settled and persisted on shutdown and on reload, so nothing is lost.
 
-- `0 s` preserves immediate settlement on every solar-generation update.
-- A positive value, such as `60 s`, accumulates deltas and settles them no more frequently than that interval.
+Two details keep a settlement that does not coincide with a meter reading accurate:
+
+- The zero clamp on net export is applied **per reading**, because a value clamped over a whole interval is not the same number. Only the valuation is deferred, never the energy accounting.
+- Net export is often observed before the slower solar counter reports the generation that produced it. Export energy that no solar reading covers yet is carried over and subtracted from the next settlement's generation, so a settlement landing between two solar readings cannot credit exported energy at the higher import tariff.
+
+If a tariff needed by a settlement is unknown - an unavailable price sensor, or a restart before the first price arrives - the settlement is deferred instead of dropping the energy: it stays pending and is valued by the next settlement that has a price.
+
+### Accounting interval
+
+The **Accounting interval** defaults to **60 seconds**, for new entries and for existing entries that do not store an explicit value. Config entries created before this option was renamed keep their `minimum_accounting_interval` value.
+
+- A positive value, such as `60 s`, accumulates energy and values it once per interval, plus once per tariff change.
+- `0 s` values the accumulated energy on every sensor update. This restores the previous behaviour and is only useful for debugging.
+
+Because a tariff change always triggers its own settlement, an interval longer than the tariff period never mixes two tariffs; it only makes the savings sensors update less often.
 
 ## Required input sensors
 
@@ -57,7 +78,7 @@ During setup, select five sensors and one accounting option:
 | Import price | currency/kWh | Current dynamic price paid for imported electricity. |
 | Exported energy | kWh | Smart meter export counter. |
 | Export price | currency/kWh | Current dynamic price received for exported electricity. |
-| Minimum accounting interval | seconds | Minimum spacing between monetary settlements. Defaults to `60`. Existing entries without an explicitly stored value also use `60`. Set it to `0` to restore immediate settlement on every solar reading. |
+| Accounting interval | seconds | How often accumulated energy is valued. Defaults to `60`. A tariff change always forces a settlement of its own, at the outgoing tariff. Set it to `0` to value energy on every sensor update. |
 
 The exposed savings sensors use Home Assistant's configured currency and are cumulative monetary totals with `device_class: monetary` and `state_class: total`, allowing Home Assistant's recorder/statistics pipeline to track them.
 
@@ -90,7 +111,7 @@ The new value is persisted immediately and the **Total savings** sensor is recal
 1. Copy `custom_components/solar_savings` into your Home Assistant `config/custom_components/` directory.
 2. Restart Home Assistant.
 3. Go to **Settings → Devices & services → Add integration**.
-4. Search for **Solar Savings**, select the five required sensors, and choose the minimum accounting interval.
+4. Search for **Solar Savings**, select the five required sensors, and choose the accounting interval.
 
 ### HACS custom repository
 

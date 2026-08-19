@@ -20,9 +20,14 @@ CONF_IMPORT_ENERGY_SENSOR: Final = "import_energy_sensor"
 CONF_IMPORT_PRICE_SENSOR: Final = "import_price_sensor"
 CONF_EXPORT_ENERGY_SENSOR: Final = "export_energy_sensor"
 CONF_EXPORT_PRICE_SENSOR: Final = "export_price_sensor"
+CONF_ACCOUNTING_INTERVAL: Final = "accounting_interval"
+
+# Key used before the accounting interval became a fixed settlement period
+# instead of a throttle on solar-driven settlements. Existing config entries
+# keep working by falling back to it.
 CONF_MIN_ACCOUNTING_INTERVAL: Final = "minimum_accounting_interval"
 
-DEFAULT_MIN_ACCOUNTING_INTERVAL: Final = 60
+DEFAULT_ACCOUNTING_INTERVAL: Final = 60
 
 SERVICE_SET_VALUE: Final = "set_value"
 ATTR_VALUE: Final = "value"
