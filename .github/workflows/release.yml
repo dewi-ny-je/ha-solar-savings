@@ -79,27 +79,26 @@ jobs:
 
       # HACS downloads the source of the tagged commit, so the version the
       # integration reports is whatever the manifest holds at that commit.
-      - name: Commit the version to the manifest
+      # The packaging metadata declares the same version, and the script keeps
+      # the two in step.
+      - name: Commit the released version
         id: commit
         if: steps.version.outputs.release == 'true' && inputs.dry_run != true
         env:
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
-          package=$(find custom_components -mindepth 1 -maxdepth 1 -type d \
-            -not -name '__pycache__' -printf '%f\n' | sort | head -1)
-          manifest="custom_components/${package}/manifest.json"
-          jq --arg version "${VERSION}" '.version = $version' \
-            "${manifest}" > "${manifest}.new"
-          mv "${manifest}.new" "${manifest}"
+          python3 .github/scripts/set_version.py "${VERSION}"
           git config user.name "github-actions[bot]"
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- "${manifest}"; then
-            echo "The manifest already declares ${VERSION}."
+          # The checkout is otherwise untouched, so the only tracked files
+          # that differ are the ones the script rewrote. The release notes are
+          # untracked and stay out of the commit.
+          if git diff --quiet; then
+            echo "The version files already declare ${VERSION}."
           else
-            git add "${manifest}"
-            git commit -m "chore(release): ${TAG}"
+            git commit --all --message "chore(release): ${TAG}"
             # Pushed with GITHUB_TOKEN, which does not start another run.
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
