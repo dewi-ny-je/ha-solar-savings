@@ -11,14 +11,15 @@ from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er, selector
 
+from . import resolve_accounting_interval, unique_id_for
 from .const import (
+    CONF_ACCOUNTING_INTERVAL,
     CONF_EXPORT_ENERGY_SENSOR,
     CONF_EXPORT_PRICE_SENSOR,
-    CONF_IMPORT_ENERGY_SENSOR,
     CONF_IMPORT_PRICE_SENSOR,
-    CONF_MIN_ACCOUNTING_INTERVAL,
     CONF_SOLAR_ENERGY_SENSOR,
-    DEFAULT_MIN_ACCOUNTING_INTERVAL,
+    CONFIG_ENTRY_VERSION,
+    DEFAULT_ACCOUNTING_INTERVAL,
     DOMAIN,
 )
 
@@ -47,8 +48,8 @@ def _price_sensor_selector() -> selector.EntitySelector:
     return _sensor_selector()
 
 
-def _minimum_accounting_interval_selector() -> selector.NumberSelector:
-    """Select the minimum number of seconds between monetary settlements."""
+def _accounting_interval_selector() -> selector.NumberSelector:
+    """Select the number of seconds between monetary settlements."""
     return selector.NumberSelector(
         selector.NumberSelectorConfig(
             min=0,
@@ -64,14 +65,13 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
         vol.Required(CONF_SOLAR_ENERGY_SENSOR): _energy_sensor_selector(),
-        vol.Required(CONF_IMPORT_ENERGY_SENSOR): _energy_sensor_selector(),
         vol.Required(CONF_IMPORT_PRICE_SENSOR): _price_sensor_selector(),
         vol.Required(CONF_EXPORT_ENERGY_SENSOR): _energy_sensor_selector(),
         vol.Required(CONF_EXPORT_PRICE_SENSOR): _price_sensor_selector(),
         vol.Optional(
-            CONF_MIN_ACCOUNTING_INTERVAL,
-            default=DEFAULT_MIN_ACCOUNTING_INTERVAL,
-        ): _minimum_accounting_interval_selector(),
+            CONF_ACCOUNTING_INTERVAL,
+            default=DEFAULT_ACCOUNTING_INTERVAL,
+        ): _accounting_interval_selector(),
     }
 )
 
@@ -110,7 +110,6 @@ async def validate_input(
     """
     entities = [
         user_input[CONF_SOLAR_ENERGY_SENSOR],
-        user_input[CONF_IMPORT_ENERGY_SENSOR],
         user_input[CONF_IMPORT_PRICE_SENSOR],
         user_input[CONF_EXPORT_ENERGY_SENSOR],
         user_input[CONF_EXPORT_PRICE_SENSOR],
@@ -128,7 +127,7 @@ async def validate_input(
 class SolarSavingsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Solar Savings."""
 
-    VERSION = 1
+    VERSION = CONFIG_ENTRY_VERSION
 
     @staticmethod
     @callback
@@ -146,15 +145,7 @@ class SolarSavingsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             errors = await validate_input(self.hass, user_input)
             if not errors:
-                await self.async_set_unique_id(
-                    "|".join(
-                        [
-                            user_input[CONF_SOLAR_ENERGY_SENSOR],
-                            user_input[CONF_IMPORT_ENERGY_SENSOR],
-                            user_input[CONF_EXPORT_ENERGY_SENSOR],
-                        ]
-                    )
-                )
+                await self.async_set_unique_id(unique_id_for(user_input))
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
                     title=user_input[CONF_NAME],
@@ -194,10 +185,6 @@ class SolarSavingsOptionsFlow(config_entries.OptionsFlowWithReload):
                     default=current_config[CONF_SOLAR_ENERGY_SENSOR],
                 ): _energy_sensor_selector(),
                 vol.Required(
-                    CONF_IMPORT_ENERGY_SENSOR,
-                    default=current_config[CONF_IMPORT_ENERGY_SENSOR],
-                ): _energy_sensor_selector(),
-                vol.Required(
                     CONF_IMPORT_PRICE_SENSOR,
                     default=current_config[CONF_IMPORT_PRICE_SENSOR],
                 ): _price_sensor_selector(),
@@ -210,12 +197,9 @@ class SolarSavingsOptionsFlow(config_entries.OptionsFlowWithReload):
                     default=current_config[CONF_EXPORT_PRICE_SENSOR],
                 ): _price_sensor_selector(),
                 vol.Optional(
-                    CONF_MIN_ACCOUNTING_INTERVAL,
-                    default=current_config.get(
-                        CONF_MIN_ACCOUNTING_INTERVAL,
-                        DEFAULT_MIN_ACCOUNTING_INTERVAL,
-                    ),
-                ): _minimum_accounting_interval_selector(),
+                    CONF_ACCOUNTING_INTERVAL,
+                    default=resolve_accounting_interval(current_config),
+                ): _accounting_interval_selector(),
             }
         )
 

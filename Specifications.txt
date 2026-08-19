@@ -20,3 +20,26 @@ The two calculated revenues should be exposed as two sensors using the appropria
 Be sure to add the correct definitions so that Home assistant can track statistical data about the sensors exposed.
 
 The project should also comprise test cases which can be run during future development to ensure the results are consistent and no regressions take place.
+
+--- Amendment: self-consumption from the energy balance ---
+
+The rule above values solar generation by first computing net export as
+"exports minus imports" at every reading and subtracting the accumulated
+result from generation. That is an approximation. Assuming all exported
+energy originates from the solar panels, conservation of energy over any
+window gives
+
+    solar + import = load + export
+
+so the generation that served the house is exactly
+
+    self consumption = solar generated - exported energy
+
+The imported energy register does not appear, so the integration no longer
+asks for an imported-energy sensor; the import price sensor is still needed
+to value self-consumed energy. Unlike the net-export rule, this expression
+uses only monotonically increasing counters, so it is additive: it gives the
+same answer whether it is evaluated at every reading or once at the end of an
+accounting period. The net-export rule instead clamps at zero per reading,
+which overstates self-consumption whenever both registers advance within the
+same reading, and overstates it further the longer the evaluation period.

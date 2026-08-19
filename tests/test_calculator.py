@@ -29,32 +29,27 @@ def test_positive_delta_filters_resets() -> None:
 
 
 def test_self_consumption_and_export_revenue_are_accumulated() -> None:
-    """Solar generation is first valued as avoided imports, then exports."""
+    """Generation that was not exported avoided imports and is worth more."""
     calc = SolarSavingsCalculator()
     calc.seed(
         solar_energy=Decimal("100"),
-        import_energy=Decimal("50"),
         export_energy=Decimal("10"),
     )
 
-    # Between solar updates, the smart meter sees 2 kWh imports and 4 kWh exports.
-    # Only 2 kWh is net exported and receives the lower export tariff.
-    calc.handle_grid_update(
-        import_energy=Decimal("52"),
-        export_energy=Decimal("14"),
-        export_price=Decimal("0.08"),
-    )
+    # Between solar updates, the smart meter exports 4 kWh at the lower tariff.
+    calc.observe_export_update(export_energy=Decimal("14"))
 
-    # Solar production rose by 5 kWh. 2 kWh was net exported, so 3 kWh avoided
-    # grid imports and receives the higher import tariff.
+    # Solar production rose by 5 kWh, of which 4 kWh was exported, so 1 kWh
+    # served the house and is worth the avoided import tariff.
     calc.handle_solar_update(
         solar_energy=Decimal("105"),
         import_price=Decimal("0.30"),
+        export_price=Decimal("0.08"),
     )
 
-    assert calc.values.self_consumption_savings == Decimal("0.90")
-    assert calc.values.export_revenue == Decimal("0.16")
-    assert calc.values.total_savings == Decimal("1.06")
+    assert calc.values.self_consumption_savings == Decimal("0.30")
+    assert calc.values.export_revenue == Decimal("0.32")
+    assert calc.values.total_savings == Decimal("0.62")
 
 
 def test_negative_solar_delta_from_daily_reset_is_ignored() -> None:
@@ -62,7 +57,6 @@ def test_negative_solar_delta_from_daily_reset_is_ignored() -> None:
     calc = SolarSavingsCalculator()
     calc.seed(
         solar_energy=Decimal("18"),
-        import_energy=Decimal("0"),
         export_energy=Decimal("0"),
     )
 
@@ -77,19 +71,18 @@ def test_export_revenue_waits_for_next_solar_update() -> None:
     calc = SolarSavingsCalculator()
     calc.seed(
         solar_energy=Decimal("10"),
-        import_energy=Decimal("5"),
         export_energy=Decimal("1"),
     )
 
-    calc.handle_grid_update(
-        import_energy=Decimal("5"),
-        export_energy=Decimal("2"),
-        export_price=Decimal("0.05"),
-    )
+    calc.observe_export_update(export_energy=Decimal("2"))
 
     assert calc.values.export_revenue == Decimal("0")
 
-    calc.handle_solar_update(solar_energy=Decimal("12"), import_price=Decimal("0.25"))
+    calc.handle_solar_update(
+        solar_energy=Decimal("12"),
+        import_price=Decimal("0.25"),
+        export_price=Decimal("0.05"),
+    )
 
     assert calc.values.export_revenue == Decimal("0.05")
     assert calc.values.self_consumption_savings == Decimal("0.25")
@@ -101,19 +94,18 @@ def test_negative_export_price_reduces_export_revenue() -> None:
     calc = SolarSavingsCalculator()
     calc.seed(
         solar_energy=Decimal("100"),
-        import_energy=Decimal("0"),
         export_energy=Decimal("0"),
     )
 
-    calc.handle_grid_update(
-        import_energy=Decimal("0"),
-        export_energy=Decimal("2"),
-        export_price=Decimal("-0.05"),
-    )
+    calc.observe_export_update(export_energy=Decimal("2"))
 
     assert calc.values.export_revenue == Decimal("0")
 
-    calc.handle_solar_update(solar_energy=Decimal("102"), import_price=Decimal("0.30"))
+    calc.handle_solar_update(
+        solar_energy=Decimal("102"),
+        import_price=Decimal("0.30"),
+        export_price=Decimal("-0.05"),
+    )
 
     assert calc.values.export_revenue == Decimal("-0.10")
     assert calc.values.total_savings == Decimal("-0.10")
@@ -123,7 +115,6 @@ def test_snapshot_roundtrip_preserves_totals() -> None:
     calc = SolarSavingsCalculator()
     calc.seed(
         solar_energy=Decimal("1"),
-        import_energy=Decimal("1"),
         export_energy=Decimal("1"),
     )
     calc.handle_solar_update(solar_energy=Decimal("2"), import_price=Decimal("0.40"))
@@ -198,7 +189,6 @@ def test_set_public_value_overwrites_self_consumption_savings() -> None:
     calc = SolarSavingsCalculator()
     calc.seed(
         solar_energy=Decimal("1"),
-        import_energy=Decimal("1"),
         export_energy=Decimal("1"),
     )
     calc.handle_solar_update(solar_energy=Decimal("5"), import_price=Decimal("0.30"))
@@ -238,15 +228,10 @@ def test_solar_deltas_can_be_accumulated_before_accounting() -> None:
     calc = SolarSavingsCalculator()
     calc.seed(
         solar_energy=Decimal("100"),
-        import_energy=Decimal("50"),
         export_energy=Decimal("10"),
     )
 
-    calc.handle_grid_update(
-        import_energy=Decimal("51"),
-        export_energy=Decimal("13"),
-        export_price=Decimal("0.08"),
-    )
+    calc.observe_export_update(export_energy=Decimal("13"))
 
     assert calc.observe_solar_update(solar_energy=Decimal("102")) is True
     assert calc.observe_solar_update(solar_energy=Decimal("105")) is True
@@ -254,9 +239,233 @@ def test_solar_deltas_can_be_accumulated_before_accounting() -> None:
     assert calc.values.self_consumption_savings == Decimal("0")
     assert calc.values.export_revenue == Decimal("0")
 
-    assert calc.settle_pending_accounting(import_price=Decimal("0.30")) is True
+    assert (
+        calc.settle_pending_accounting(
+            import_price=Decimal("0.30"),
+            export_price=Decimal("0.08"),
+        )
+        is True
+    )
 
-    # Pending solar = 5 kWh; pending net export = 2 kWh.
+    # Pending solar = 5 kWh, of which 3 kWh was exported.
+    assert calc.values.self_consumption_savings == Decimal("0.60")
+    assert calc.values.export_revenue == Decimal("0.24")
+    assert calc.values.total_savings == Decimal("0.84")
+
+
+def test_energy_is_not_valued_between_settlements() -> None:
+    """Meter readings only accumulate energy; no tariff is applied per reading."""
+    calc = SolarSavingsCalculator()
+    calc.seed(
+        solar_energy=Decimal("0"),
+        export_energy=Decimal("0"),
+    )
+
+    calc.observe_export_update(export_energy=Decimal("1"))
+    calc.observe_solar_update(solar_energy=Decimal("1"))
+    calc.observe_export_update(export_energy=Decimal("2"))
+    calc.observe_solar_update(solar_energy=Decimal("2"))
+
+    assert calc.values.total_savings == Decimal("0")
+
+    snapshot = calc.as_dict()
+    assert snapshot["pending_export_energy"] == "2"
+    assert snapshot["pending_solar_energy"] == "2"
+
+
+def test_single_settlement_matches_per_reading_valuation() -> None:
+    """One settlement per interval gives the same money as valuing every reading."""
+    per_reading = SolarSavingsCalculator()
+    once = SolarSavingsCalculator()
+    for calc in (per_reading, once):
+        calc.seed(
+            solar_energy=Decimal("0"),
+            export_energy=Decimal("0"),
+        )
+
+    import_price = Decimal("0.30")
+    export_price = Decimal("0.08")
+    readings = [
+        (Decimal("3"), Decimal("6")),
+        (Decimal("5"), Decimal("11")),
+        (Decimal("9"), Decimal("18")),
+    ]
+
+    for export_energy, solar_energy in readings:
+        per_reading.observe_export_update(export_energy=export_energy)
+        per_reading.handle_solar_update(
+            solar_energy=solar_energy,
+            import_price=import_price,
+            export_price=export_price,
+        )
+
+        once.observe_export_update(export_energy=export_energy)
+        once.observe_solar_update(solar_energy=solar_energy)
+
+    once.settle_pending_accounting(
+        import_price=import_price,
+        export_price=export_price,
+    )
+
+    assert once.values.export_revenue == per_reading.values.export_revenue
+    assert (
+        once.values.self_consumption_savings
+        == per_reading.values.self_consumption_savings
+    )
+    # 18 kWh generated, 9 kWh exported: 9 kWh served the house either way.
+    assert once.values.total_savings == Decimal("3.42")
+
+
+def test_tariff_change_values_earlier_energy_at_the_previous_tariff() -> None:
+    """Energy accumulated before a tariff change keeps the outgoing tariff."""
+    calc = SolarSavingsCalculator()
+    calc.seed(
+        solar_energy=Decimal("0"),
+        export_energy=Decimal("0"),
+    )
+
+    # Cheap hour: 2 kWh exported, 5 kWh generated.
+    calc.observe_export_update(export_energy=Decimal("2"))
+    calc.observe_solar_update(solar_energy=Decimal("5"))
+
+    # The tariff is about to change, so settle at the tariffs still in force.
+    calc.settle_pending_accounting(
+        import_price=Decimal("0.20"),
+        export_price=Decimal("0.05"),
+    )
+
+    assert calc.values.self_consumption_savings == Decimal("0.60")
+    assert calc.values.export_revenue == Decimal("0.10")
+
+    # Expensive hour: another 1 kWh exported and 4 kWh generated.
+    calc.observe_export_update(export_energy=Decimal("3"))
+    calc.observe_solar_update(solar_energy=Decimal("9"))
+    calc.settle_pending_accounting(
+        import_price=Decimal("0.40"),
+        export_price=Decimal("0.10"),
+    )
+
+    assert calc.values.self_consumption_savings == Decimal("1.80")
+    assert calc.values.export_revenue == Decimal("0.20")
+
+
+def test_export_settled_before_the_solar_reading_is_not_counted_twice() -> None:
+    """A settlement between two solar readings must not inflate self-consumption."""
+    calc = SolarSavingsCalculator()
+    calc.seed(
+        solar_energy=Decimal("0"),
+        export_energy=Decimal("0"),
+    )
+
+    # The smart meter reports 2 kWh net export before the slower solar counter
+    # reports the generation that produced it.
+    calc.observe_export_update(export_energy=Decimal("2"))
+    calc.settle_pending_accounting(
+        import_price=Decimal("0.30"),
+        export_price=Decimal("0.08"),
+    )
+
+    assert calc.values.export_revenue == Decimal("0.16")
+    assert calc.values.self_consumption_savings == Decimal("0")
+    assert calc.as_dict()["unallocated_export_energy"] == "2"
+
+    # The 5 kWh solar reading now covers that export, so only 3 kWh avoided
+    # imports, exactly as if a single settlement had covered both readings.
+    calc.observe_solar_update(solar_energy=Decimal("5"))
+    calc.settle_pending_accounting(
+        import_price=Decimal("0.30"),
+        export_price=Decimal("0.08"),
+    )
+
     assert calc.values.self_consumption_savings == Decimal("0.90")
     assert calc.values.export_revenue == Decimal("0.16")
-    assert calc.values.total_savings == Decimal("1.06")
+    assert calc.as_dict()["unallocated_export_energy"] == "0"
+
+
+def test_settlement_without_pending_energy_reports_no_change() -> None:
+    """An interval with no energy must not schedule a save or a state write."""
+    calc = SolarSavingsCalculator()
+    calc.seed(
+        solar_energy=Decimal("10"),
+        export_energy=Decimal("1"),
+    )
+
+    assert (
+        calc.settle_pending_accounting(
+            import_price=Decimal("0.30"),
+            export_price=Decimal("0.08"),
+        )
+        is False
+    )
+
+
+def test_version_1_snapshot_is_migrated() -> None:
+    """A snapshot from the net-export model must upgrade without losing money."""
+    calc = SolarSavingsCalculator.from_dict(
+        {
+            "last_solar_energy": "10",
+            "last_import_energy": "4",
+            "last_export_energy": "3",
+            "pending_net_export_energy": "1",
+            "pending_export_revenue": "0.25",
+            "export_revenue": "1.00",
+            "self_consumption_savings": "2.00",
+        }
+    )
+
+    # Revenue already valued at the tariff of the day is kept.
+    assert calc.values.export_revenue == Decimal("1.25")
+    assert calc.values.total_savings == Decimal("3.25")
+
+    snapshot = calc.as_dict()
+    # Export energy awaiting allocation carries over under its new name.
+    assert snapshot["pending_export_energy"] == "1"
+    assert "pending_net_export_energy" not in snapshot
+    assert "pending_export_revenue" not in snapshot
+    # The import register is no longer part of the model.
+    assert "last_import_energy" not in snapshot
+    assert snapshot["last_export_energy"] == "3"
+
+
+def test_settlement_is_deferred_while_a_needed_tariff_is_unknown() -> None:
+    """Energy is held, not dropped, until a tariff is available to value it."""
+    calc = SolarSavingsCalculator()
+    calc.seed(
+        solar_energy=Decimal("0"),
+        export_energy=Decimal("0"),
+    )
+
+    calc.observe_export_update(export_energy=Decimal("2"))
+    calc.observe_solar_update(solar_energy=Decimal("5"))
+
+    assert calc.settle_pending_accounting(import_price=None, export_price=None) is False
+    assert calc.as_dict()["pending_solar_energy"] == "5"
+    assert calc.as_dict()["pending_export_energy"] == "2"
+
+    assert (
+        calc.settle_pending_accounting(
+            import_price=Decimal("0.30"),
+            export_price=Decimal("0.08"),
+        )
+        is True
+    )
+    assert calc.values.self_consumption_savings == Decimal("0.90")
+    assert calc.values.export_revenue == Decimal("0.16")
+
+
+def test_self_consumption_is_generation_minus_export() -> None:
+    """The split follows the energy balance, whatever the house imported."""
+    calc = SolarSavingsCalculator()
+    calc.seed(solar_energy=Decimal("0"), export_energy=Decimal("0"))
+
+    # 10 kWh generated, 6 kWh exported: 4 kWh must have served the house,
+    # no matter how much was imported while the sun was down.
+    calc.observe_export_update(export_energy=Decimal("6"))
+    calc.observe_solar_update(solar_energy=Decimal("10"))
+    calc.settle_pending_accounting(
+        import_price=Decimal("0.30"),
+        export_price=Decimal("0.08"),
+    )
+
+    assert calc.values.self_consumption_savings == Decimal("1.20")
+    assert calc.values.export_revenue == Decimal("0.48")
