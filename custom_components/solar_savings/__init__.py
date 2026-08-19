@@ -26,6 +26,7 @@ from .const import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from datetime import datetime
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import Event, HomeAssistant
@@ -233,6 +234,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data.settle = async_settle_pending_accounting
 
     @callback
+    def async_settle_scheduled_accounting(_now: datetime) -> None:
+        """Run the interval settlement from the event loop.
+
+        ``async_call_later`` inspects the callable it is given: anything that
+        is neither a coroutine function nor decorated with ``@callback`` is
+        treated as blocking and run in an executor thread, where the dispatcher
+        and the store are not safe to touch. Keeping the decorator on this
+        target is what pins the settlement to the event loop.
+        """
+        async_settle_pending_accounting()
+
+    @callback
     def async_schedule_accounting() -> None:
         """Make sure accumulated energy is settled within the interval.
 
@@ -249,7 +262,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             data.cancel_scheduled_accounting = async_call_later(
                 hass,
                 data.accounting_interval,
-                lambda _now: async_settle_pending_accounting(),
+                async_settle_scheduled_accounting,
             )
 
     @callback
