@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import voluptuous as vol
 from homeassistant.components.sensor import (
@@ -12,6 +12,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
+from homeassistant.const import UnitOfEnergy
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
@@ -22,8 +23,8 @@ from homeassistant.helpers.dispatcher import (
 )
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import SolarSavingsRuntimeData
-from .calculator import SETTABLE_VALUE_KEYS, to_finite_decimal
+from . import SolarSavingsRuntimeData, battery_is_tracked, entry_config
+from .calculator import ENERGY_VALUE_KEYS, SETTABLE_VALUE_KEYS, ZERO, to_finite_decimal
 from .const import (
     ATTR_VALUE,
     DOMAIN,
@@ -39,31 +40,82 @@ class SolarSavingsSensorEntityDescription(SensorEntityDescription):
     """Description for a Solar Savings sensor."""
 
     value_key: str
+    # Scenario costs and virtual meters only mean something once the grid
+    # import and the battery registers are known, so they are not created at
+    # all without them.
+    requires_battery: bool = False
+    # The solar split is the whole story for a house without a battery, and
+    # only a detail of it once a battery time-shifts the energy, so with a
+    # battery it is created but left switched off.
+    demoted_with_battery: bool = False
+
+
+def _money(
+    key: str,
+    *,
+    requires_battery: bool = False,
+    demoted_with_battery: bool = False,
+    enabled: bool = True,
+) -> SolarSavingsSensorEntityDescription:
+    """Describe a cumulative monetary sensor."""
+    return SolarSavingsSensorEntityDescription(
+        key=key,
+        translation_key=key,
+        value_key=key,
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        requires_battery=requires_battery,
+        demoted_with_battery=demoted_with_battery,
+        entity_registry_enabled_default=enabled,
+    )
+
+
+def _energy(key: str) -> SolarSavingsSensorEntityDescription:
+    """Describe a cumulative virtual energy meter."""
+    return SolarSavingsSensorEntityDescription(
+        key=key,
+        translation_key=key,
+        value_key=key,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        suggested_display_precision=3,
+        requires_battery=True,
+        entity_registry_enabled_default=False,
+    )
 
 
 SENSOR_DESCRIPTIONS: tuple[SolarSavingsSensorEntityDescription, ...] = (
-    SolarSavingsSensorEntityDescription(
-        key="self_consumption_savings",
-        translation_key="self_consumption_savings",
-        value_key="self_consumption_savings",
-        device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL,
-    ),
-    SolarSavingsSensorEntityDescription(
-        key="export_revenue",
-        translation_key="export_revenue",
-        value_key="export_revenue",
-        device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL,
-    ),
-    SolarSavingsSensorEntityDescription(
-        key="total_savings",
-        translation_key="total_savings",
-        value_key="total_savings",
-        device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL,
-    ),
+    _money("self_consumption_savings", demoted_with_battery=True),
+    _money("export_revenue", demoted_with_battery=True),
+    _money("solar_savings"),
+    _money("battery_savings"),
+    _money("total_savings"),
+    _money("actual_cost", requires_battery=True, enabled=False),
+    _money("cost_without_battery", requires_battery=True, enabled=False),
+    _money("cost_without_battery_and_solar", requires_battery=True, enabled=False),
+    _energy("virtual_import_without_battery"),
+    _energy("virtual_export_without_battery"),
+    _energy("virtual_import_without_solar"),
 )
+
+
+def descriptions_for(
+    *,
+    track_battery: bool,
+) -> list[SolarSavingsSensorEntityDescription]:
+    """Return the sensors an entry publishes, and how they start out."""
+    descriptions = []
+    for description in SENSOR_DESCRIPTIONS:
+        if description.requires_battery and not track_battery:
+            continue
+        if description.demoted_with_battery and track_battery:
+            descriptions.append(
+                replace(description, entity_registry_enabled_default=False)
+            )
+        else:
+            descriptions.append(description)
+    return descriptions
 
 
 async def async_setup_entry(
@@ -72,9 +124,10 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Solar Savings sensors."""
+    track_battery = battery_is_tracked(entry_config(entry))
     async_add_entities(
         SolarSavingsSensor(hass, entry, description)
-        for description in SENSOR_DESCRIPTIONS
+        for description in descriptions_for(track_battery=track_battery)
     )
 
     platform = entity_platform.async_get_current_platform()
@@ -116,7 +169,8 @@ class SolarSavingsSensor(RestoreSensor, SensorEntity):
             "name": entry.title,
             "manufacturer": "Solar Savings",
         }
-        self._attr_native_unit_of_measurement = hass.config.currency
+        if description.native_unit_of_measurement is None:
+            self._attr_native_unit_of_measurement = hass.config.currency
 
     @property
     def native_value(self) -> float:
@@ -156,9 +210,13 @@ class SolarSavingsSensor(RestoreSensor, SensorEntity):
         Exposed as the ``solar_savings.set_value`` action so users can
         initialise the integration with totals from a previous system or
         correct accumulated drift. The ``required_features`` filter on the
-        service registration keeps the derived total savings sensor out of the
+        service registration keeps the derived savings sensors out of the
         target before any handler runs; the guard below is defence-in-depth for
         direct calls and never mutates state when it rejects.
+
+        Monetary totals accept negative values, because negative tariffs make
+        them legitimately negative. The virtual energy meters do not: they
+        count kWh.
         """
         value_key = self.entity_description.value_key
         if value_key not in SETTABLE_VALUE_KEYS:
@@ -174,6 +232,13 @@ class SolarSavingsSensor(RestoreSensor, SensorEntity):
                 translation_domain=DOMAIN,
                 translation_key="invalid_value",
                 translation_placeholders={"value": str(value)},
+            )
+
+        if value_key in ENERGY_VALUE_KEYS and decimal_value < ZERO:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="negative_energy_value",
+                translation_placeholders={"entity_id": self.entity_id},
             )
 
         data: SolarSavingsRuntimeData = self.entry.runtime_data

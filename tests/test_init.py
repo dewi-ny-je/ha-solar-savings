@@ -7,17 +7,23 @@ from decimal import Decimal
 
 from custom_components.solar_savings import (
     _WARNED_UNITS_BY_ENTITY,
+    battery_is_tracked,
     energy_to_kwh,
+    flatten_config,
     resolve_accounting_interval,
     unique_id_for,
 )
 from custom_components.solar_savings.const import (
     CONF_ACCOUNTING_INTERVAL,
+    CONF_BATTERY_CHARGE_ENERGY_SENSOR,
+    CONF_BATTERY_DISCHARGE_ENERGY_SENSOR,
     CONF_EXPORT_ENERGY_SENSOR,
+    CONF_GRID_IMPORT_ENERGY_SENSOR,
     CONF_IMPORT_ENERGY_SENSOR,
     CONF_MIN_ACCOUNTING_INTERVAL,
     CONF_SOLAR_ENERGY_SENSOR,
     DEFAULT_ACCOUNTING_INTERVAL,
+    SECTION_BATTERY,
 )
 
 
@@ -129,3 +135,43 @@ def test_unique_id_ignores_the_removed_import_sensor() -> None:
     }
 
     assert unique_id_for(config) == "sensor.solar|sensor.export"
+
+
+def test_flatten_config_merges_the_battery_section() -> None:
+    """Nested battery selections are read like any other option."""
+    config = flatten_config(
+        {
+            CONF_SOLAR_ENERGY_SENSOR: "sensor.solar",
+            SECTION_BATTERY: {
+                CONF_GRID_IMPORT_ENERGY_SENSOR: "sensor.grid_import",
+                CONF_BATTERY_CHARGE_ENERGY_SENSOR: "sensor.charge",
+                CONF_BATTERY_DISCHARGE_ENERGY_SENSOR: "sensor.discharge",
+            },
+        }
+    )
+
+    assert SECTION_BATTERY not in config
+    assert config[CONF_GRID_IMPORT_ENERGY_SENSOR] == "sensor.grid_import"
+    assert battery_is_tracked(config) is True
+
+
+def test_flatten_config_drops_cleared_battery_sensors() -> None:
+    """Clearing a selection removes it instead of storing an empty value."""
+    config = flatten_config(
+        {
+            CONF_SOLAR_ENERGY_SENSOR: "sensor.solar",
+            CONF_GRID_IMPORT_ENERGY_SENSOR: "sensor.grid_import",
+            SECTION_BATTERY: {CONF_GRID_IMPORT_ENERGY_SENSOR: ""},
+        }
+    )
+
+    assert CONF_GRID_IMPORT_ENERGY_SENSOR not in config
+    assert battery_is_tracked(config) is False
+
+
+def test_flatten_config_leaves_a_solar_only_entry_alone() -> None:
+    """An entry without the section keeps working unchanged."""
+    config = flatten_config({CONF_SOLAR_ENERGY_SENSOR: "sensor.solar"})
+
+    assert config == {CONF_SOLAR_ENERGY_SENSOR: "sensor.solar"}
+    assert battery_is_tracked(config) is False

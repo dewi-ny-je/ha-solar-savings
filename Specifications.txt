@@ -43,3 +43,55 @@ same answer whether it is evaluated at every reading or once at the end of an
 accounting period. The net-export rule instead clamps at zero per reading,
 which overstates self-consumption whenever both registers advance within the
 same reading, and overstates it further the longer the evaluation period.
+
+--- Amendment: battery tracking and counterfactual scenarios ---
+
+The configuration gains an optional bottom section with three more entities:
+energy imported from the grid, energy charged into the battery, and energy
+taken from the battery. They are selected all together or not at all.
+
+When they are present, the calculation is expressed as three scenarios, each
+one a grid position valued with the same two price entities:
+
+1) the actual cost/revenue, from the import and export registers as they are;
+2) the hypothetical cost without a battery, obtained by correcting the actual
+   grid position for what the battery contributed, "discharge - charge". The
+   correction is applied against the opposite direction of the actual flow
+   first, so energy the battery supplied cancels export before it forces an
+   import, and energy it absorbed cancels import before it becomes export;
+3) the hypothetical cost without a battery and without the panels, obtained by
+   correcting the second scenario for the generation as well.
+
+The published savings are differences between the scenarios: battery savings
+is 2) minus 1), solar savings is 3) minus 2), and total savings is 3) minus 1),
+which is their sum. All of them can be negative, because exporting at a
+negative price and charging a battery from the grid both cost money.
+
+The scenario split runs on every change of any energy register, which keeps
+the correction accurate: over a longer window an import and an export can
+cancel each other out before the correction is applied. Valuing the split
+energy still happens once per accounting interval, or at a tariff change,
+because money is linear in energy while a tariff holds.
+
+A battery register with no usable value holds the split instead of distorting
+it: the observed deltas wait, and the split is exact once the register reports
+again. The wait is bounded at five minutes, after which the held energy is
+accounted for as if the battery had been idle and a warning is logged.
+
+The same algorithm covers a system with no battery, as scenarios 1) and 3):
+the battery correction is zero, so scenario 2) collapses onto scenario 1) and
+battery savings are zero, while solar savings reduce exactly to the
+energy-balance rule of the previous amendment,
+
+    self consumption = solar generated - exported energy
+
+valued at the import price, plus the exported energy valued at the export
+price. Both cases therefore share one code path. The one figure a system
+without the import register cannot produce is the absolute cost of a scenario;
+the differences between scenarios do not contain it, so the savings stay exact
+and only the scenario cost entities are withheld.
+
+The scenario costs and the virtual "no battery" and "no battery, no solar"
+energy meters are published as entities that are disabled by default, so only
+users who want them pay for them, and they can be seeded or corrected with the
+same set_value action as the savings totals.

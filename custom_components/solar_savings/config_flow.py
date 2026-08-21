@@ -9,10 +9,12 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import entity_registry as er, selector
 
-from . import resolve_accounting_interval, unique_id_for
+from . import flatten_config, resolve_accounting_interval, unique_id_for
 from .const import (
+    BATTERY_CONF_KEYS,
     CONF_ACCOUNTING_INTERVAL,
     CONF_EXPORT_ENERGY_SENSOR,
     CONF_EXPORT_PRICE_SENSOR,
@@ -21,6 +23,7 @@ from .const import (
     CONFIG_ENTRY_VERSION,
     DEFAULT_ACCOUNTING_INTERVAL,
     DOMAIN,
+    SECTION_BATTERY,
 )
 
 DEFAULT_NAME = "Solar savings"
@@ -61,6 +64,31 @@ def _accounting_interval_selector() -> selector.NumberSelector:
     )
 
 
+def _battery_section(
+    current_config: dict[str, Any] | None = None,
+) -> section:
+    """Build the optional battery-tracking section.
+
+    The three sensors are optional individually so the section can be left
+    empty, and are checked together in :func:`validate_input`: a battery
+    scenario needs all three or none of them. Current selections are offered as
+    suggestions rather than defaults, so a sensor can also be cleared again.
+    """
+    config = current_config or {}
+    return section(
+        vol.Schema(
+            {
+                vol.Optional(
+                    key,
+                    description={"suggested_value": config.get(key)},
+                ): _energy_sensor_selector()
+                for key in BATTERY_CONF_KEYS
+            }
+        ),
+        {"collapsed": not any(config.get(key) for key in BATTERY_CONF_KEYS)},
+    )
+
+
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
@@ -72,6 +100,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
             CONF_ACCOUNTING_INTERVAL,
             default=DEFAULT_ACCOUNTING_INTERVAL,
         ): _accounting_interval_selector(),
+        vol.Required(SECTION_BATTERY): _battery_section(),
     }
 )
 
@@ -104,16 +133,23 @@ async def validate_input(
 ) -> dict[str, str]:
     """Validate the user input allows setup.
 
-    The selected entities may be template/utility-meter helpers, so validation is
-    intentionally limited to presence and duplicate checks. Runtime unavailable
-    states are handled gracefully by the calculator.
+    The selected entities may be template/utility-meter helpers, so validation
+    is intentionally limited to presence, completeness, and duplicate checks.
+    Runtime unavailable states are handled gracefully by the calculator.
     """
+    config = flatten_config(user_input)
     entities = [
-        user_input[CONF_SOLAR_ENERGY_SENSOR],
-        user_input[CONF_IMPORT_PRICE_SENSOR],
-        user_input[CONF_EXPORT_ENERGY_SENSOR],
-        user_input[CONF_EXPORT_PRICE_SENSOR],
+        config[CONF_SOLAR_ENERGY_SENSOR],
+        config[CONF_IMPORT_PRICE_SENSOR],
+        config[CONF_EXPORT_ENERGY_SENSOR],
+        config[CONF_EXPORT_PRICE_SENSOR],
     ]
+
+    battery_entities = [config[key] for key in BATTERY_CONF_KEYS if key in config]
+    if battery_entities and len(battery_entities) != len(BATTERY_CONF_KEYS):
+        return {"base": "incomplete_battery_selection"}
+    entities.extend(battery_entities)
+
     if len(entities) != len(set(entities)):
         return {"base": "duplicate_entity"}
     missing = [
@@ -167,7 +203,9 @@ class SolarSavingsOptionsFlow(config_entries.OptionsFlowWithReload):
     ) -> config_entries.ConfigFlowResult:
         """Manage Solar Savings options."""
         errors: dict[str, str] = {}
-        current_config = {**self.config_entry.data, **self.config_entry.options}
+        current_config = flatten_config(
+            {**self.config_entry.data, **self.config_entry.options}
+        )
 
         if user_input is not None:
             errors = await validate_input(self.hass, user_input)
@@ -200,6 +238,7 @@ class SolarSavingsOptionsFlow(config_entries.OptionsFlowWithReload):
                     CONF_ACCOUNTING_INTERVAL,
                     default=resolve_accounting_interval(current_config),
                 ): _accounting_interval_selector(),
+                vol.Required(SECTION_BATTERY): _battery_section(current_config),
             }
         )
 

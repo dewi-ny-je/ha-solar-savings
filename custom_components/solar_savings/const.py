@@ -25,6 +25,25 @@ CONF_EXPORT_PRICE_SENSOR: Final = "export_price_sensor"
 # strip it from existing entries.
 CONF_IMPORT_ENERGY_SENSOR: Final = "import_energy_sensor"
 
+# Optional battery tracking. All three registers are selected together: the
+# counterfactual scenarios need the grid import to value a scenario and both
+# battery registers to remove the battery from it.
+SECTION_BATTERY: Final = "battery"
+CONF_GRID_IMPORT_ENERGY_SENSOR: Final = "grid_import_energy_sensor"
+CONF_BATTERY_CHARGE_ENERGY_SENSOR: Final = "battery_charge_energy_sensor"
+CONF_BATTERY_DISCHARGE_ENERGY_SENSOR: Final = "battery_discharge_energy_sensor"
+BATTERY_CONF_KEYS: Final = (
+    CONF_GRID_IMPORT_ENERGY_SENSOR,
+    CONF_BATTERY_CHARGE_ENERGY_SENSOR,
+    CONF_BATTERY_DISCHARGE_ENERGY_SENSOR,
+)
+
+# How long the scenario split waits for an unreadable battery register before
+# it gives up and assumes the battery was idle. Battery meters usually report
+# every few seconds, so a gap this long means the sensor is gone rather than
+# late.
+BATTERY_STALE_TIMEOUT: Final = 300.0
+
 CONF_ACCOUNTING_INTERVAL: Final = "accounting_interval"
 
 # Key used before the accounting interval became a fixed settlement period

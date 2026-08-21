@@ -10,4 +10,4 @@ set_value:
       selector:
         number:
           mode: box
-          step: 0.01
+          step: any
