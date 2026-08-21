@@ -12,7 +12,10 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from custom_components.solar_savings.calculator import SolarSavingsCalculator
+from custom_components.solar_savings.calculator import (
+    ENERGY_VALUE_KEYS,
+    SolarSavingsCalculator,
+)
 
 DAY_IMPORT = Decimal("0.30")
 DAY_EXPORT = Decimal("0.08")
@@ -306,10 +309,7 @@ def test_slow_solar_register_does_not_shift_money_between_tariffs() -> None:
     assert_scenarios_are_consistent(calc)
 
 
-@pytest.mark.parametrize(
-    "value_key",
-    ["virtual_import_without_battery", "virtual_import_without_solar"],
-)
+@pytest.mark.parametrize("value_key", ENERGY_VALUE_KEYS)
 def test_energy_totals_reject_negative_restores(value_key: str) -> None:
     """Virtual meters count kWh, so a negative restored value is not usable."""
     calc = battery_calculator()
