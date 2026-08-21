@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 import types
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -19,11 +20,16 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from custom_components.solar_savings import async_setup_entry
 from custom_components.solar_savings.const import (
+    BATTERY_STALE_TIMEOUT,
     CONF_ACCOUNTING_INTERVAL,
+    CONF_BATTERY_CHARGE_ENERGY_SENSOR,
+    CONF_BATTERY_DISCHARGE_ENERGY_SENSOR,
     CONF_EXPORT_ENERGY_SENSOR,
     CONF_EXPORT_PRICE_SENSOR,
+    CONF_GRID_IMPORT_ENERGY_SENSOR,
     CONF_IMPORT_PRICE_SENSOR,
     CONF_SOLAR_ENERGY_SENSOR,
+    SECTION_BATTERY,
     SIGNAL_UPDATED,
 )
 
@@ -34,6 +40,9 @@ SOLAR_SENSOR = "sensor.solar_energy"
 EXPORT_SENSOR = "sensor.export_energy"
 IMPORT_PRICE_SENSOR = "sensor.import_price"
 EXPORT_PRICE_SENSOR = "sensor.export_price"
+GRID_IMPORT_SENSOR = "sensor.grid_import_energy"
+CHARGE_SENSOR = "sensor.battery_charge_energy"
+DISCHARGE_SENSOR = "sensor.battery_discharge_energy"
 
 
 def hass_callback(func: Any) -> Any:
@@ -324,3 +333,133 @@ def test_zero_interval_settles_without_a_timer(recorder: Recorder) -> None:
 
     assert recorder.scheduled == []
     assert recorder.signals == [f"{SIGNAL_UPDATED}_{entry.entry_id}"]
+
+
+def build_battery_entry(interval: float = 300) -> FakeConfigEntry:
+    """Build a config entry that also tracks a home battery."""
+    entry = build_entry(interval)
+    entry.data[SECTION_BATTERY] = {
+        CONF_GRID_IMPORT_ENERGY_SENSOR: GRID_IMPORT_SENSOR,
+        CONF_BATTERY_CHARGE_ENERGY_SENSOR: CHARGE_SENSOR,
+        CONF_BATTERY_DISCHARGE_ENERGY_SENSOR: DISCHARGE_SENSOR,
+    }
+    return entry
+
+
+def prepare_battery(recorder: Recorder) -> tuple[FakeHass, FakeConfigEntry]:
+    """Set up a battery-tracking entry with every register seeded at zero."""
+    hass = FakeHass()
+    for entity_id in (
+        SOLAR_SENSOR,
+        EXPORT_SENSOR,
+        GRID_IMPORT_SENSOR,
+        CHARGE_SENSOR,
+        DISCHARGE_SENSOR,
+    ):
+        hass.states.set(entity_id, "0", "kWh")
+    hass.states.set(IMPORT_PRICE_SENSOR, "0.30")
+    hass.states.set(EXPORT_PRICE_SENSOR, "0.10")
+    entry = build_battery_entry()
+    setup_entry(hass, entry)
+    recorder.signals.clear()
+    return hass, entry
+
+
+def test_battery_registers_share_one_listener(recorder: Recorder) -> None:
+    """Every energy register is re-read whenever any of them updates."""
+    _hass, _entry = prepare_battery(recorder)
+
+    tracked = {
+        SOLAR_SENSOR,
+        EXPORT_SENSOR,
+        GRID_IMPORT_SENSOR,
+        CHARGE_SENSOR,
+        DISCHARGE_SENSOR,
+    }
+    assert tracked <= set(recorder.trackers)
+    assert len({id(recorder.trackers[entity_id]) for entity_id in tracked}) == 1
+
+
+def test_battery_discharge_is_accounted_against_the_no_battery_scenario(
+    recorder: Recorder,
+) -> None:
+    """A discharge that avoided an import is worth the import tariff."""
+    hass, entry = prepare_battery(recorder)
+
+    hass.states.set(DISCHARGE_SENSOR, "2", "kWh")
+    recorder.trackers[DISCHARGE_SENSOR](None)
+    recorder.fire_timer()
+
+    values = entry.runtime_data.calculator.values
+    assert values.battery_savings == Decimal("0.60")
+    assert values.solar_savings == Decimal("0")
+    assert values.total_savings == Decimal("0.60")
+
+
+def test_unreadable_battery_register_holds_the_split(
+    recorder: Recorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Grid energy waits for a battery register that is briefly unavailable."""
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    hass, entry = prepare_battery(recorder)
+
+    hass.states.set(DISCHARGE_SENSOR, "unavailable")
+    hass.states.set(GRID_IMPORT_SENSOR, "3", "kWh")
+    recorder.trackers[GRID_IMPORT_SENSOR](None)
+    recorder.fire_timer()
+
+    calculator = entry.runtime_data.calculator
+    assert calculator.as_dict()["unsplit_grid_import_energy"] == "3"
+    assert calculator.values.actual_cost == Decimal("0")
+
+    # The battery reports again: the held energy is now attributable.
+    hass.states.set(DISCHARGE_SENSOR, "1", "kWh")
+    recorder.trackers[DISCHARGE_SENSOR](None)
+    recorder.fire_timer()
+
+    assert calculator.as_dict()["unsplit_grid_import_energy"] == "0"
+    assert calculator.values.actual_cost == Decimal("0.90")
+    assert calculator.values.battery_savings == Decimal("0.30")
+
+
+def test_stale_battery_register_stops_blocking_accounting(
+    recorder: Recorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A battery sensor that never returns must not stall accounting for good."""
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    hass, entry = prepare_battery(recorder)
+
+    hass.states.set(CHARGE_SENSOR, "unavailable")
+    hass.states.set(GRID_IMPORT_SENSOR, "3", "kWh")
+    recorder.trackers[GRID_IMPORT_SENSOR](None)
+
+    calculator = entry.runtime_data.calculator
+    assert calculator.as_dict()["unsplit_grid_import_energy"] == "3"
+
+    clock[0] += BATTERY_STALE_TIMEOUT
+    hass.states.set(GRID_IMPORT_SENSOR, "4", "kWh")
+    recorder.trackers[GRID_IMPORT_SENSOR](None)
+    recorder.fire_timer()
+
+    # The energy is valued as if the battery had been idle.
+    assert calculator.as_dict()["unsplit_grid_import_energy"] == "0"
+    assert calculator.values.actual_cost == Decimal("1.20")
+    assert calculator.values.battery_savings == Decimal("0")
+
+
+def test_solar_only_entry_publishes_no_scenario_costs(recorder: Recorder) -> None:
+    """Without the battery section the absolute costs stay untracked."""
+    hass, entry = prepare(recorder)
+
+    hass.states.set(SOLAR_SENSOR, "11", "kWh")
+    recorder.trackers[SOLAR_SENSOR](None)
+    recorder.fire_timer()
+
+    values = entry.runtime_data.calculator.values
+    assert values.solar_savings == values.total_savings == Decimal("0.30")
+    assert values.battery_savings == Decimal("0")
+    assert values.actual_cost == Decimal("0")

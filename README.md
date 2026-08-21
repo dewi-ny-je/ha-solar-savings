@@ -1,71 +1,104 @@
 # Solar Savings for Home Assistant
 
-Solar Savings is a Home Assistant custom integration that estimates the cumulative financial benefit of residential solar panels when import and export tariffs can change over time.
+Solar Savings is a Home Assistant custom integration that estimates the cumulative financial benefit of residential solar panels - and, optionally, of a home battery - when import and export tariffs can change over time.
 
-It tracks three cumulative monetary sensors:
+It answers one question: **how much less did the house pay than it would have paid without the equipment?** Everything it publishes is a difference between what actually happened and a counterfactual house that lacked the battery, or lacked both the battery and the panels.
 
-- **Self-consumption savings**: generated solar energy that avoided buying electricity from the grid, valued at the current import tariff.
-- **Export revenue**: energy exported to the grid, valued at the current export tariff.
-- **Total savings**: self-consumption savings plus export revenue.
+## Sensors
+
+Which sensors an entry publishes depends on whether the optional battery section is filled in. Sensors marked *hidden* are created but disabled by default; switch them on in the entity settings if you want them.
+
+| Sensor | Solar only | With battery |
+| --- | --- | --- |
+| **Solar savings** | enabled | enabled |
+| **Battery savings** | enabled (always `0`) | enabled |
+| **Total savings** | enabled | enabled |
+| **Self-consumption savings** | enabled | hidden |
+| **Export revenue** | enabled | hidden |
+| **Actual grid cost** | not created | hidden |
+| **Grid cost without battery** | not created | hidden |
+| **Grid cost without battery and solar** | not created | hidden |
+| **Imported energy without battery** | not created | hidden |
+| **Exported energy without battery** | not created | hidden |
+| **Imported energy without battery and solar** | not created | hidden |
+
+- **Solar savings** is what the panels earned: the imports they avoided plus the export they earned. It is still reported split into **Self-consumption savings** and **Export revenue**.
+- **Battery savings** is what the battery earned by moving energy in time, which is negative whenever it charged from the grid or gave up export revenue, and positive when it later avoided a more expensive import.
+- **Total savings** is the sum of the two, and is exactly *grid cost without battery and solar* minus *actual grid cost*.
+
+All three can be negative: exporting at a negative tariff costs money, and so does charging a battery from the grid.
 
 ## Accounting model
 
-Every kWh the meter exports is assumed to come from the panels. Over any window, energy conservation then gives
+### The three scenarios
+
+Over any window, conservation of energy fixes the house load:
 
 ```text
-solar + import = load + export
+load = solar + grid_import + battery_discharge - grid_export - battery_charge
 ```
 
-and therefore
+The load is a property of the house, not of the equipment, so it stays the same in every scenario. Each scenario is therefore just a different grid position, and all three are valued with the same two tariffs:
+
+```text
+cost = import_energy * import_price - export_energy * export_price
+```
+
+1. **Actual.** What the meter recorded: `grid_import` and `grid_export`.
+2. **Without the battery.** The grid has to cover what the battery contributed, `battery_discharge - battery_charge`. That correction is applied against the opposite direction of the actual flow first: energy the battery supplied would otherwise have reduced the export before it forced an import, and energy the battery absorbed would otherwise have reduced the import before it became export.
+3. **Without the battery and without the panels.** The same correction again, with the generation. Everything the second scenario exported came from the panels, so removing them removes that export and turns the remaining generation - the part that served the house - into import.
+
+The published figures are the differences:
+
+```text
+battery_savings = cost_without_battery - actual_cost
+solar_savings   = cost_without_battery_and_solar - cost_without_battery
+total_savings   = cost_without_battery_and_solar - actual_cost
+```
+
+### One model, with or without a battery
+
+A house with no battery is the same model with `battery_charge = battery_discharge = 0`. The correction is then zero, the second scenario collapses onto the first, battery savings are exactly zero, and solar savings reduce to
 
 ```text
 self_consumed_energy = solar_generated - exported_energy
+solar_savings = self_consumed_energy * import_price + exported_energy * export_price
 ```
 
-which is exactly the part of the household load that solar served. The imported-energy register never enters the calculation, so the integration does not ask for it. Both counters only ever increase, so their deltas are additive and the split does not depend on where an accounting boundary falls.
+which is the energy-balance rule this integration used before batteries were supported, to the cent. That is why an existing entry keeps its **Self-consumption savings**, **Export revenue** and **Total savings** figures unchanged after the upgrade, and why there is a single code path for both cases.
 
-Solar energy is therefore valued in this order:
+The one thing a solar-only entry cannot do is put a price on a scenario, because the absolute cost of a grid position needs the imported-energy register, which it does not ask for. The *differences* do not: the import register cancels out of every one of them. So the savings are exact either way, and the scenario cost sensors are only published when the battery section is filled in.
 
-1. Generated solar energy first reduces grid imports, at the import tariff.
-2. Whatever the meter exported is valued separately, at the export tariff.
+### Why the battery matters for solar savings too
 
-The integration listens continuously to:
+Without battery tracking, every exported kWh is assumed to come from the panels. A battery breaks that assumption in both directions: a battery discharging into the grid inflates export revenue with energy the panels did not produce right then, and solar stored in a battery is credited at the import tariff of the moment it was stored rather than the moment it was used. Tracking the battery removes both distortions from the solar figure and moves them into the battery figure, where they belong.
 
-- smart-meter export counter changes,
-- solar-generation counter changes, and
-- import/export tariff changes.
+### When energy is attributed and valued
 
-Meter readings only accumulate **energy**. Each counter is read on every update, so a daily-reset counter is handled as soon as the reset is observed, and only positive deltas are accumulated:
+The integration listens continuously to every configured energy register and to the two tariff sensors. Accounting is a three-stage pipeline.
+
+**Observing.** Each counter is read on every update of any of them, so a daily-reset counter is handled as soon as the reset is observed, and only positive deltas are accumulated:
 
 ```text
-pending_export_energy += max(export_energy - previous_export_energy, 0)
-pending_solar_energy  += max(solar_energy  - previous_solar_energy,  0)
+observed_delta += max(reading - previous_reading, 0)
 ```
 
-### When energy is valued
+**Splitting.** The observed deltas are attributed to the three scenarios. This is pure energy arithmetic, so it runs on every reading, which keeps the correction accurate: the finer the window, the less an import and an export inside the same window can cancel each other out before the battery correction is applied.
 
-Revenue is linear in energy, so while a tariff is constant `sum(energy_i) * price` equals `sum(energy_i * price)`. Valuing every single reading is therefore redundant work - and a stored-state write every few seconds. Accumulated energy is instead converted into money at a **settlement**, which happens:
+**Settling.** The accumulated scenario energy is converted into money. Revenue is linear in energy, so while a tariff is constant `sum(energy_i) * price` equals `sum(energy_i * price)`, and valuing every single reading would only mean a stored-state write every few seconds. A settlement happens:
 
 - once per **accounting interval**, armed by the first meter reading after the previous settlement, and
 - immediately **before an import or export tariff change is applied**, using the tariff that was in force before the change.
 
-A settlement values the accumulated energy:
-
-```text
-self_consumed_energy = max(pending_solar_energy - pending_export_energy, 0)
-self_consumption_savings += self_consumed_energy * import_price
-export_revenue += pending_export_energy * export_price
-```
-
-Settlements are also the only point where the savings sensors are written and the accounting snapshot is persisted, so a busy smart meter no longer causes a stored-state write every few seconds. Pending energy is settled and persisted on shutdown and on reload, so nothing is lost.
-
-The solar counter usually reports every few minutes while the meter reports every few seconds, so a settlement can land after export was recorded but before the solar reading that covers it. Export energy that no solar reading covers yet is carried over and subtracted from the next settlement's generation, instead of being dropped and then credited again at the higher import tariff. That makes the result independent of where the settlement boundaries fall.
+Settlements are the only point where the sensors are written and the accounting snapshot is persisted. Pending energy is settled and persisted on shutdown and on reload, so nothing is lost.
 
 If a tariff needed by a settlement is unknown - an unavailable price sensor, or a restart before the first price arrives - the settlement is deferred instead of dropping the energy: it stays pending and is valued by the next settlement that has a price.
 
-### Batteries
+### Registers that report at different moments
 
-The model holds while all exported energy comes from the panels. A battery that discharges into the grid breaks that assumption: its export is credited at the export tariff and subtracted from solar generation, understating self-consumption. Solar energy used to charge a battery counts as self-consumption when it is stored, at the import tariff in force at that moment, rather than when it is used.
+The solar counter usually reports every few minutes while the smart meter reports every few seconds, so a settlement can land after export was recorded but before the solar reading that covers it. Export energy that no solar reading covers yet is carried over and subtracted from the next settlement's generation, instead of being dropped and then credited again at the higher import tariff. That makes the solar split independent of where the settlement boundaries fall.
+
+Battery registers are handled at the earlier, splitting stage. If one of them has no usable value, the observed grid energy is **held unsplit** rather than being attributed to a battery that may or may not have been running: the deltas are preserved, so the split is exact once the register reports again. The wait is bounded at **5 minutes**; past that the sensor is treated as gone, the held energy is accounted for as if the battery had been idle, and a warning is logged. A warning is logged once per outage, and an informational message when the register recovers.
 
 ### Accounting interval
 
@@ -74,21 +107,33 @@ The **Accounting interval** defaults to **60 seconds**, for new entries and for 
 - A positive value, such as `60 s`, accumulates energy and values it once per interval, plus once per tariff change.
 - `0 s` values the accumulated energy on every sensor update.
 
-Because a tariff change always triggers its own settlement, and because the energy split is boundary-independent, the interval only decides how often the savings sensors update. It does not affect the totals.
+Because a tariff change always triggers its own settlement, the interval mostly decides how often the savings sensors update rather than what they add up to.
 
-## Required input sensors
+## Input sensors
 
 During setup, select four sensors and one accounting option:
 
 | Input | Expected unit | Notes |
 | --- | --- | --- |
 | Solar generation energy | kWh | Total-increasing is ideal. Daily-reset production counters are supported by ignoring negative deltas. |
-| Import price | currency/kWh | Current dynamic price paid for imported electricity. Used to value self-consumed energy. |
+| Import price | currency/kWh | Current dynamic price paid for imported electricity. |
 | Exported energy | kWh | Smart meter export counter. |
 | Export price | currency/kWh | Current dynamic price received for exported electricity. |
 | Accounting interval | seconds | How often accumulated energy is valued. Defaults to `60`. A tariff change always forces a settlement of its own, at the outgoing tariff. Set it to `0` to value energy on every sensor update. |
 
-The exposed savings sensors use Home Assistant's configured currency and are cumulative monetary totals with `device_class: monetary` and `state_class: total`, allowing Home Assistant's recorder/statistics pipeline to track them.
+The **Battery tracking** section at the bottom of the form is optional, and takes three more sensors. Fill in **all three or none**: the form rejects a partial selection, because a scenario cannot be built without all of them.
+
+| Input | Expected unit | Notes |
+| --- | --- | --- |
+| Imported energy | kWh | Smart meter import counter. Needed to price a scenario. |
+| Battery charged energy | kWh | Cumulative energy that went into the battery. |
+| Battery discharged energy | kWh | Cumulative energy taken out of the battery. |
+
+All energy sensors are read in `Wh`, `kWh`, or `MWh` and must be monotonically increasing, apart from resets such as a daily counter returning to zero, which are detected and ignored.
+
+Battery tracking can be added to an existing entry from the integration's options: the new registers are seeded from their current readings, so no historical energy is counted, and the entry starts publishing the battery sensors after the reload. The savings accumulated so far are kept.
+
+The monetary sensors use Home Assistant's configured currency and are cumulative totals with `device_class: monetary` and `state_class: total`. The virtual energy meters are `device_class: energy` with `state_class: total_increasing`, so they can be used in the energy dashboard as counterfactual comparisons.
 
 ## Actions
 
@@ -98,9 +143,9 @@ Overwrites the stored cumulative total of a Solar Savings sensor. This is useful
 
 | Field | Description |
 | --- | --- |
-| `value` | New cumulative monetary total, in the configured currency. Negative values are allowed; non-finite values (`NaN`/`∞`) are rejected. Pass the value as a quoted string to preserve exact decimal precision. |
+| `value` | New cumulative total: an amount in the configured currency for the monetary sensors, or kWh for the virtual energy meters. Monetary totals may be negative; the energy meters may not. Non-finite values (`NaN`/`∞`) are rejected. Pass the value as a quoted string to preserve exact decimal precision. |
 
-Target either the **Self-consumption savings** or the **Export revenue** sensor. The **Total savings** sensor is derived from those two totals and does not support this action: it is skipped when you target the whole device or area, and selecting it explicitly is rejected before anything changes.
+Every stored total can be set: **Self-consumption savings**, **Export revenue**, **Battery savings**, the three scenario costs, and the three virtual energy meters. **Solar savings** and **Total savings** are derived from those totals and do not support this action: they are skipped when you target the whole device or area, and selecting one explicitly is rejected before anything changes. To seed solar savings, set the self-consumption and export totals it is calculated from.
 
 ```yaml
 action: solar_savings.set_value
@@ -110,7 +155,7 @@ data:
   value: 123.45
 ```
 
-The new value is persisted immediately and the **Total savings** sensor is recalculated.
+The new value is persisted immediately and the derived sensors are recalculated.
 
 ## Installation
 
@@ -119,7 +164,7 @@ The new value is persisted immediately and the **Total savings** sensor is recal
 1. Copy `custom_components/solar_savings` into your Home Assistant `config/custom_components/` directory.
 2. Restart Home Assistant.
 3. Go to **Settings → Devices & services → Add integration**.
-4. Search for **Solar Savings**, select the four required sensors, and choose the accounting interval.
+4. Search for **Solar Savings**, select the four required sensors, choose the accounting interval, and optionally fill in the battery section.
 
 ### HACS custom repository
 
@@ -152,11 +197,11 @@ mypy custom_components/solar_savings
 
 This project includes:
 
-- UI-based config flow.
+- UI-based config flow, with a collapsible section for the optional battery sensors.
 - Translations and entity translation keys.
 - Stable unique IDs for entities.
 - Persistent accounting state through Home Assistant storage, with config entry and stored-snapshot migrations.
-- Pure calculation logic with regression tests.
+- Pure calculation logic with regression tests, including the identities that tie the three scenarios together.
 - Ruff, mypy, pytest, and coverage configuration.
 - A GitHub Actions workflow for continuous integration.
 

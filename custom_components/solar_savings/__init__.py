@@ -3,21 +3,28 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Callable
 
 from .calculator import SolarSavingsCalculator, to_decimal
 from .const import (
+    BATTERY_CONF_KEYS,
+    BATTERY_STALE_TIMEOUT,
     CONF_ACCOUNTING_INTERVAL,
+    CONF_BATTERY_CHARGE_ENERGY_SENSOR,
+    CONF_BATTERY_DISCHARGE_ENERGY_SENSOR,
     CONF_EXPORT_ENERGY_SENSOR,
     CONF_EXPORT_PRICE_SENSOR,
+    CONF_GRID_IMPORT_ENERGY_SENSOR,
     CONF_IMPORT_ENERGY_SENSOR,
     CONF_IMPORT_PRICE_SENSOR,
     CONF_MIN_ACCOUNTING_INTERVAL,
     CONFIG_ENTRY_VERSION,
     CONF_SOLAR_ENERGY_SENSOR,
     DEFAULT_ACCOUNTING_INTERVAL,
+    SECTION_BATTERY,
     SIGNAL_UPDATED,
     STORAGE_KEY,
     STORAGE_SAVE_DELAY,
@@ -42,6 +49,18 @@ _ENERGY_TO_KWH = {
 }
 _WARNED_UNITS_BY_ENTITY: dict[str, Any] = {}
 
+# Maps the calculator's register names onto the configuration keys that select
+# the sensor feeding them. The battery registers are only present when battery
+# tracking is configured.
+_ENERGY_REGISTERS: dict[str, str] = {
+    "solar_energy": CONF_SOLAR_ENERGY_SENSOR,
+    "export_energy": CONF_EXPORT_ENERGY_SENSOR,
+    "grid_import_energy": CONF_GRID_IMPORT_ENERGY_SENSOR,
+    "battery_charge_energy": CONF_BATTERY_CHARGE_ENERGY_SENSOR,
+    "battery_discharge_energy": CONF_BATTERY_DISCHARGE_ENERGY_SENSOR,
+}
+_BATTERY_REGISTERS = ("battery_charge_energy", "battery_discharge_energy")
+
 
 @dataclass(slots=True)
 class SolarSavingsRuntimeData:
@@ -51,6 +70,10 @@ class SolarSavingsRuntimeData:
     store: Store[dict[str, Any]]
     accounting_interval: float
     remove_listeners: list[Callable[[], None]] = field(default_factory=list)
+    # When a battery register stopped reporting, the moment the wait began, and
+    # whether the wait has already been given up on.
+    battery_hold_since: float | None = None
+    battery_is_stale: bool = False
     # Last known good tariffs. Settlements are always valued with these, which
     # is what lets a tariff change be settled with the price that was in force
     # before it.
@@ -81,6 +104,36 @@ def resolve_accounting_interval(config: Mapping[str, Any]) -> float:
         )
         return float(DEFAULT_ACCOUNTING_INTERVAL)
     return max(interval, 0.0)
+
+
+def flatten_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the configuration with the battery section merged into the top.
+
+    The config flow groups the optional battery sensors in a collapsible
+    section, which Home Assistant stores as a nested mapping. Everything else
+    reads a flat configuration, so the nesting is undone once, here. Blank
+    selections are dropped so ``in`` is enough to test whether a sensor was
+    chosen.
+    """
+    flat = {key: value for key, value in config.items() if key != SECTION_BATTERY}
+    section: Mapping[str, Any] = config.get(SECTION_BATTERY) or {}
+    for key in BATTERY_CONF_KEYS:
+        value = section.get(key, flat.get(key))
+        if value:
+            flat[key] = value
+        else:
+            flat.pop(key, None)
+    return flat
+
+
+def battery_is_tracked(config: Mapping[str, Any]) -> bool:
+    """Report whether the entry selects all three battery-tracking sensors."""
+    return all(config.get(key) for key in BATTERY_CONF_KEYS)
+
+
+def entry_config(entry: ConfigEntry) -> dict[str, Any]:
+    """Return a config entry's effective, flattened configuration."""
+    return flatten_config({**entry.data, **entry.options})
 
 
 def unique_id_for(config: Mapping[str, Any]) -> str:
@@ -166,16 +219,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store: Store[dict[str, Any]] = Store(
         hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}"
     )
-    calculator = SolarSavingsCalculator.from_dict(await store.async_load())
-    config = {**entry.data, **entry.options}
+    config = entry_config(entry)
+    track_battery = battery_is_tracked(config)
+    calculator = SolarSavingsCalculator.from_dict(
+        await store.async_load(),
+        track_battery=track_battery,
+    )
     accounting_interval = resolve_accounting_interval(config)
 
-    solar_state = hass.states.get(config[CONF_SOLAR_ENERGY_SENSOR])
-    export_state = hass.states.get(config[CONF_EXPORT_ENERGY_SENSOR])
-    calculator.seed(
-        solar_energy=energy_to_kwh(solar_state),
-        export_energy=energy_to_kwh(export_state),
-    )
+    energy_sensors = {
+        register: config[conf_key]
+        for register, conf_key in _ENERGY_REGISTERS.items()
+        if config.get(conf_key)
+    }
+
+    def read_energy_registers() -> dict[str, Decimal | None]:
+        """Read every configured energy register, in kWh."""
+        return {
+            register: energy_to_kwh(hass.states.get(entity_id))
+            for register, entity_id in energy_sensors.items()
+        }
+
+    calculator.seed(**read_energy_registers())
 
     def current_price(entity_id: str) -> Decimal | None:
         """Read a tariff sensor, or None when it has no usable value."""
@@ -266,19 +331,63 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
     @callback
-    def handle_export_event(_event: Event) -> None:
-        export_state = hass.states.get(config[CONF_EXPORT_ENERGY_SENSOR])
-        if calculator.observe_export_update(
-            export_energy=energy_to_kwh(export_state),
-        ):
-            async_schedule_accounting()
+    def async_battery_registers_are_readable(
+        readings: Mapping[str, Decimal | None],
+    ) -> bool:
+        """Decide whether the scenario split can run on these readings.
+
+        A battery register that is momentarily unavailable is worth waiting
+        for: its delta is preserved, so a split that runs once it reports again
+        is exact, while splitting without it would credit the battery's energy
+        to the grid. The wait is bounded, because a sensor that was removed or
+        renamed would otherwise stall accounting for good.
+        """
+        if all(readings.get(register) is not None for register in _BATTERY_REGISTERS):
+            if data.battery_is_stale:
+                _LOGGER.info(
+                    "Battery energy sensors for %s are reporting again; "
+                    "resuming exact battery accounting",
+                    entry.title,
+                )
+            data.battery_hold_since = None
+            data.battery_is_stale = False
+            return True
+
+        if data.battery_is_stale:
+            return True
+
+        now = time.monotonic()
+        if data.battery_hold_since is None:
+            data.battery_hold_since = now
+            return False
+        if now - data.battery_hold_since < BATTERY_STALE_TIMEOUT:
+            return False
+
+        data.battery_is_stale = True
+        _LOGGER.warning(
+            "Battery energy sensors for %s have not reported a usable value for "
+            "%s seconds; accounting for the energy meanwhile as if the battery "
+            "were idle",
+            entry.title,
+            BATTERY_STALE_TIMEOUT,
+        )
+        return True
 
     @callback
-    def handle_solar_event(_event: Event) -> None:
-        solar_state = hass.states.get(config[CONF_SOLAR_ENERGY_SENSOR])
-        if calculator.observe_solar_update(
-            solar_energy=energy_to_kwh(solar_state),
-        ):
+    def handle_energy_event(_event: Event) -> None:
+        """Observe every energy register, then attribute what can be attributed.
+
+        All registers are re-read on any of their updates, so a reading is
+        never attributed to a scenario before its siblings had the chance to
+        report the same window.
+        """
+        readings = read_energy_registers()
+        changed = calculator.observe(**readings)
+
+        if not track_battery or async_battery_registers_are_readable(readings):
+            changed = calculator.split_scenarios() or changed
+
+        if changed:
             async_schedule_accounting()
 
     @callback
@@ -308,13 +417,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         [
             async_track_state_change_event(
                 hass,
-                [config[CONF_EXPORT_ENERGY_SENSOR]],
-                handle_export_event,
-            ),
-            async_track_state_change_event(
-                hass,
-                [config[CONF_SOLAR_ENERGY_SENSOR]],
-                handle_solar_event,
+                list(energy_sensors.values()),
+                handle_energy_event,
             ),
             async_track_state_change_event(
                 hass,

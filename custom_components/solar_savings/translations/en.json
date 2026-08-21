@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Set up Solar Savings",
-        "description": "Choose the sensors used to calculate cumulative solar savings. Energy sensors should be kWh counters. Self-consumption is the generated energy that was not exported, so no imported-energy sensor is needed. Price sensors should expose the current import or export price per kWh in your configured currency. The accounting interval is expressed in seconds: accumulated energy is valued once per interval, and also whenever an import or export tariff changes, using the tariff that applied before the change. Use 0 to value energy on every sensor update.",
+        "description": "Choose the sensors used to calculate cumulative solar savings. Energy sensors should be kWh counters. Price sensors should expose the current import or export price per kWh in your configured currency. The accounting interval is expressed in seconds: accumulated energy is valued once per interval, and also whenever an import or export tariff changes, using the tariff that applied before the change. Use 0 to value energy on every sensor update. Without the optional battery section, self-consumption is the generated energy that was not exported, so no imported-energy sensor is needed.",
         "data": {
           "name": "Name",
           "solar_energy_sensor": "Solar generation energy sensor",
@@ -12,12 +12,24 @@
           "export_energy_sensor": "Exported energy sensor",
           "export_price_sensor": "Export price sensor",
           "accounting_interval": "Accounting interval"
+        },
+        "sections": {
+          "battery": {
+            "name": "Battery tracking (optional)",
+            "description": "Select all three sensors to also account for a home battery, or leave them all empty. With them, the integration compares what you actually paid against two hypothetical houses: one with the panels but no battery, and one with neither. That splits the savings into a solar and a battery part, and no longer assumes that everything the meter exported came from the panels.",
+            "data": {
+              "grid_import_energy_sensor": "Imported energy sensor",
+              "battery_charge_energy_sensor": "Battery charged energy sensor",
+              "battery_discharge_energy_sensor": "Battery discharged energy sensor"
+            }
+          }
         }
       }
     },
     "error": {
       "duplicate_entity": "Each selected sensor must be unique.",
-      "entity_not_found": "One or more selected entities could not be found."
+      "entity_not_found": "One or more selected entities could not be found.",
+      "incomplete_battery_selection": "Select all three battery tracking sensors, or none of them."
     },
     "abort": {
       "already_configured": "These energy meters are already configured."
@@ -27,7 +39,7 @@
     "step": {
       "init": {
         "title": "Configure Solar Savings",
-        "description": "Update the sensors used to calculate cumulative solar savings. The accounting interval is expressed in seconds: accumulated energy is valued once per interval, and also whenever an import or export tariff changes, using the tariff that applied before the change. Use 0 to value energy on every sensor update.",
+        "description": "Update the sensors used to calculate cumulative solar savings. The accounting interval is expressed in seconds: accumulated energy is valued once per interval, and also whenever an import or export tariff changes, using the tariff that applied before the change. Use 0 to value energy on every sensor update. Adding or removing the optional battery sensors changes which savings sensors this entry publishes.",
         "data": {
           "name": "Name",
           "solar_energy_sensor": "Solar generation energy sensor",
@@ -35,12 +47,24 @@
           "export_energy_sensor": "Exported energy sensor",
           "export_price_sensor": "Export price sensor",
           "accounting_interval": "Accounting interval"
+        },
+        "sections": {
+          "battery": {
+            "name": "Battery tracking (optional)",
+            "description": "Select all three sensors to also account for a home battery, or leave them all empty. With them, the integration compares what you actually paid against two hypothetical houses: one with the panels but no battery, and one with neither. That splits the savings into a solar and a battery part, and no longer assumes that everything the meter exported came from the panels.",
+            "data": {
+              "grid_import_energy_sensor": "Imported energy sensor",
+              "battery_charge_energy_sensor": "Battery charged energy sensor",
+              "battery_discharge_energy_sensor": "Battery discharged energy sensor"
+            }
+          }
         }
       }
     },
     "error": {
       "duplicate_entity": "Each selected sensor must be unique.",
-      "entity_not_found": "One or more selected entities could not be found."
+      "entity_not_found": "One or more selected entities could not be found.",
+      "incomplete_battery_selection": "Select all three battery tracking sensors, or none of them."
     }
   },
   "entity": {
@@ -51,29 +75,56 @@
       "export_revenue": {
         "name": "Export revenue"
       },
+      "solar_savings": {
+        "name": "Solar savings"
+      },
+      "battery_savings": {
+        "name": "Battery savings"
+      },
       "total_savings": {
         "name": "Total savings"
+      },
+      "actual_cost": {
+        "name": "Actual grid cost"
+      },
+      "cost_without_battery": {
+        "name": "Grid cost without battery"
+      },
+      "cost_without_battery_and_solar": {
+        "name": "Grid cost without battery and solar"
+      },
+      "virtual_import_without_battery": {
+        "name": "Imported energy without battery"
+      },
+      "virtual_export_without_battery": {
+        "name": "Exported energy without battery"
+      },
+      "virtual_import_without_solar": {
+        "name": "Imported energy without battery and solar"
       }
     }
   },
   "services": {
     "set_value": {
       "name": "Set stored value",
-      "description": "Overwrites the stored cumulative total of a Solar Savings sensor, for example to initialise self-consumption savings or export revenue from a previous system, or to correct accumulated drift.",
+      "description": "Overwrites the stored cumulative total of a Solar Savings sensor, for example to initialise savings from a previous system, or to correct accumulated drift.",
       "fields": {
         "value": {
           "name": "Value",
-          "description": "The new cumulative monetary total, in the configured currency."
+          "description": "The new cumulative total: an amount in the configured currency for the monetary sensors, or kWh for the virtual energy meters."
         }
       }
     }
   },
   "exceptions": {
     "cannot_set_derived_value": {
-      "message": "{entity_id} is the derived total savings and cannot be set directly. Set the self-consumption savings and export revenue sensors instead."
+      "message": "{entity_id} is derived from the other Solar Savings totals and cannot be set directly. Set the totals it is calculated from instead."
     },
     "invalid_value": {
       "message": "\"{value}\" is not a valid amount. Provide a finite number in the configured currency."
+    },
+    "negative_energy_value": {
+      "message": "{entity_id} counts energy and cannot be set to a negative value."
     }
   }
 }
