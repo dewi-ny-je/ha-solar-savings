@@ -95,3 +95,43 @@ The scenario costs and the virtual "no battery" and "no battery, no solar"
 energy meters are published as entities that are disabled by default, so only
 users who want them pay for them, and they can be seeded or corrected with the
 same set_value action as the savings totals.
+
+--- Correction: the attribution window ---
+
+Attributing the scenarios on every change of any energy register, as the
+amendment above prescribed, is wrong in practice. The battery correction is
+cancelled against the grid flow of the same window, and the registers do not
+report together: a smart meter reports every few seconds while a battery
+counter reports about once a minute. Almost every window then holds grid
+export with no battery delta, which is read as solar export, and the
+occasional window holds a battery delta with no grid export, which is read as
+an avoided import. A battery selling to the grid overnight showed up as solar
+export revenue on a night with no sun, of exactly the amount
+"grid export * export price".
+
+Attribution therefore happens once per settlement window, over the same energy
+the settlement is about to value. Because the window now has to hold a reading
+from every meter, a battery entry settles at no less than sixty seconds,
+whatever the configured accounting interval says. Measured against recorded
+history, the spurious solar savings of an evening of battery export fall from
+the full export revenue to under one percent of it, and the result is stable
+for any window between thirty seconds and an hour.
+
+--- Correction: closing a window at a tariff change ---
+
+A tariff change settles in the middle of an attribution window. Closing that
+window to value it at the outgoing tariff reintroduces the misattribution in
+miniature: the grid delta of the last few seconds is attributed without the
+battery delta that belongs to it, because the slower battery counter has not
+reported yet. Measured against recorded history it accounts for most of the
+residual that survived the previous correction.
+
+A tariff change therefore values everything already attributed, but leaves a
+window younger than the minimum settlement interval alone; that energy carries
+into the new tariff period. Valuing at most one window of energy at the
+incoming tariff is the smaller and unbiased error.
+
+Energy left waiting for its window keeps the settlement timer armed. Both
+bounded waits - the young window and the unreadable battery register - are
+otherwise only re-checked when another meter reading arrives, which is exactly
+what cannot be relied on when a meter has stopped reporting.

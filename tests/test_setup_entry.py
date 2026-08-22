@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from custom_components.solar_savings import async_setup_entry
 from custom_components.solar_savings.const import (
+    BATTERY_MIN_ACCOUNTING_INTERVAL,
     BATTERY_STALE_TIMEOUT,
     CONF_ACCOUNTING_INTERVAL,
     CONF_BATTERY_CHARGE_ENERGY_SENSOR,
@@ -436,6 +437,7 @@ def test_stale_battery_register_stops_blocking_accounting(
     hass.states.set(CHARGE_SENSOR, "unavailable")
     hass.states.set(GRID_IMPORT_SENSOR, "3", "kWh")
     recorder.trackers[GRID_IMPORT_SENSOR](None)
+    recorder.fire_timer()
 
     calculator = entry.runtime_data.calculator
     assert calculator.as_dict()["unsplit_grid_import_energy"] == "3"
@@ -451,6 +453,61 @@ def test_stale_battery_register_stops_blocking_accounting(
     assert calculator.values.battery_savings == Decimal("0")
 
 
+def test_readings_are_attributed_once_per_settlement(recorder: Recorder) -> None:
+    """Meter readings only accumulate until the settlement window closes.
+
+    A smart meter reports far more often than a battery, so attributing each
+    reading on arrival would cancel the battery's contribution against a window
+    that does not contain it.
+    """
+    hass, entry = prepare_battery(recorder)
+    calculator = entry.runtime_data.calculator
+
+    for reading in ("0.5", "1.0", "1.5"):
+        hass.states.set(EXPORT_SENSOR, reading, "kWh")
+        recorder.trackers[EXPORT_SENSOR](None)
+
+    snapshot = calculator.as_dict()
+    assert snapshot["unsplit_grid_export_energy"] == "1.5"
+    assert snapshot["pending_virtual_export_energy"] == "0"
+
+    # The battery reports the discharge that produced that export just before
+    # the window closes, so the two cancel out.
+    hass.states.set(DISCHARGE_SENSOR, "1.5", "kWh")
+    recorder.trackers[DISCHARGE_SENSOR](None)
+    recorder.fire_timer()
+
+    assert calculator.as_dict()["unsplit_grid_export_energy"] == "0"
+    assert calculator.values.solar_savings == Decimal("0")
+    assert calculator.values.battery_savings == Decimal("0.15")
+
+
+def test_battery_entries_settle_no_faster_than_the_minimum(
+    recorder: Recorder,
+) -> None:
+    """An interval below the minimum cannot attribute battery energy."""
+    hass = FakeHass()
+    for entity_id in (
+        SOLAR_SENSOR,
+        EXPORT_SENSOR,
+        GRID_IMPORT_SENSOR,
+        CHARGE_SENSOR,
+        DISCHARGE_SENSOR,
+    ):
+        hass.states.set(entity_id, "0", "kWh")
+    hass.states.set(IMPORT_PRICE_SENSOR, "0.30")
+    hass.states.set(EXPORT_PRICE_SENSOR, "0.10")
+    entry = build_battery_entry(interval=0)
+    setup_entry(hass, entry)
+
+    assert entry.runtime_data.accounting_interval == BATTERY_MIN_ACCOUNTING_INTERVAL
+
+    # A reading arms the timer instead of settling on the spot.
+    hass.states.set(EXPORT_SENSOR, "1", "kWh")
+    recorder.trackers[EXPORT_SENSOR](None)
+    assert recorder.scheduled
+
+
 def test_solar_only_entry_publishes_no_scenario_costs(recorder: Recorder) -> None:
     """Without the battery section the absolute costs stay untracked."""
     hass, entry = prepare(recorder)
@@ -463,3 +520,71 @@ def test_solar_only_entry_publishes_no_scenario_costs(recorder: Recorder) -> Non
     assert values.solar_savings == values.total_savings == Decimal("0.30")
     assert values.battery_savings == Decimal("0")
     assert values.actual_cost == Decimal("0")
+
+
+def test_tariff_change_does_not_attribute_a_young_window(
+    recorder: Recorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tariff change must not close a window the battery has not reported in.
+
+    Settling at the outgoing tariff is worth a window of energy valued at the
+    incoming one, but not a grid delta attributed without the battery delta
+    that belongs to it.
+    """
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    hass, entry = prepare_battery(recorder)
+    calculator = entry.runtime_data.calculator
+
+    hass.states.set(EXPORT_SENSOR, "1", "kWh")
+    recorder.trackers[EXPORT_SENSOR](None)
+
+    # The tariff changes seconds later, before the battery counter reports.
+    clock[0] += 5
+    hass.states.set(IMPORT_PRICE_SENSOR, "0.40")
+    recorder.trackers[IMPORT_PRICE_SENSOR](None)
+
+    assert calculator.as_dict()["unsplit_grid_export_energy"] == "1"
+    assert calculator.values.solar_savings == Decimal("0")
+
+    # Once the window is old enough to hold a reading from every meter, the
+    # export turns out to have been the battery's.
+    clock[0] += BATTERY_MIN_ACCOUNTING_INTERVAL
+    hass.states.set(DISCHARGE_SENSOR, "1", "kWh")
+    recorder.trackers[DISCHARGE_SENSOR](None)
+    hass.states.set(IMPORT_PRICE_SENSOR, "0.50")
+    recorder.trackers[IMPORT_PRICE_SENSOR](None)
+
+    assert calculator.as_dict()["unsplit_grid_export_energy"] == "0"
+    assert calculator.values.solar_savings == Decimal("0")
+    assert calculator.values.battery_savings == Decimal("0.10")
+
+
+def test_held_energy_keeps_the_settlement_timer_armed(
+    recorder: Recorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bounded wait must be reachable without another meter reading."""
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    hass, entry = prepare_battery(recorder)
+    calculator = entry.runtime_data.calculator
+
+    hass.states.set(DISCHARGE_SENSOR, "unavailable")
+    hass.states.set(GRID_IMPORT_SENSOR, "3", "kWh")
+    recorder.trackers[GRID_IMPORT_SENSOR](None)
+
+    recorder.fire_timer()
+
+    assert calculator.as_dict()["unsplit_grid_import_energy"] == "3"
+    assert recorder.scheduled, "held energy must be retried on its own"
+
+    # No further meter reading arrives, only the retry.
+    clock[0] += BATTERY_STALE_TIMEOUT
+    recorder.fire_timer()
+
+    assert calculator.as_dict()["unsplit_grid_import_energy"] == "0"
+    assert calculator.values.actual_cost == Decimal("0.90")
+    # Nothing is waiting any more, so the retries stop.
+    assert not recorder.scheduled

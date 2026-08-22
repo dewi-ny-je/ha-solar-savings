@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from .calculator import SolarSavingsCalculator, to_decimal
 from .const import (
     BATTERY_CONF_KEYS,
+    BATTERY_MIN_ACCOUNTING_INTERVAL,
     BATTERY_STALE_TIMEOUT,
     CONF_ACCOUNTING_INTERVAL,
     CONF_BATTERY_CHARGE_ENERGY_SENSOR,
@@ -70,6 +71,9 @@ class SolarSavingsRuntimeData:
     store: Store[dict[str, Any]]
     accounting_interval: float
     remove_listeners: list[Callable[[], None]] = field(default_factory=list)
+    # When the open attribution window started holding energy. A window that
+    # has only just opened cannot contain a reading from every meter yet.
+    window_opened_at: float | None = None
     # When a battery register stopped reporting, the moment the wait began, and
     # whether the wait has already been given up on.
     battery_hold_since: float | None = None
@@ -104,6 +108,21 @@ def resolve_accounting_interval(config: Mapping[str, Any]) -> float:
         )
         return float(DEFAULT_ACCOUNTING_INTERVAL)
     return max(interval, 0.0)
+
+
+def settlement_interval_for(config: Mapping[str, Any]) -> float:
+    """Return the window over which energy is attributed and then valued.
+
+    The battery scenarios are built by cancelling the battery's contribution
+    against the grid flow of the same window, so the window has to be long
+    enough to hold a reading from every register. A battery entry is therefore
+    floored at :data:`BATTERY_MIN_ACCOUNTING_INTERVAL`, including the ``0``
+    that otherwise means "value every reading".
+    """
+    interval = resolve_accounting_interval(config)
+    if not battery_is_tracked(config):
+        return interval
+    return max(interval, BATTERY_MIN_ACCOUNTING_INTERVAL)
 
 
 def flatten_config(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -225,7 +244,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await store.async_load(),
         track_battery=track_battery,
     )
-    accounting_interval = resolve_accounting_interval(config)
+    accounting_interval = settlement_interval_for(config)
+    if accounting_interval != resolve_accounting_interval(config):
+        _LOGGER.info(
+            "Settling Solar Savings for %s every %s seconds instead of the "
+            "configured interval: battery energy can only be attributed over a "
+            "window that holds a reading from every meter",
+            entry.title,
+            accounting_interval,
+        )
 
     energy_sensors = {
         register: config[conf_key]
@@ -270,16 +297,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             cancel_scheduled_accounting()
 
     @callback
-    def async_settle_pending_accounting() -> None:
-        """Value the energy accumulated since the previous settlement.
+    def async_settle_pending_accounting(*, close_window: bool = True) -> None:
+        """Attribute and value the energy observed since the previous settlement.
 
         The last known tariffs are used, so a settlement triggered by a tariff
         change values the accumulated energy at the tariffs that were in force
         before the change. This is also the only point where sensor states and
         the stored snapshot are updated: between settlements the integration
         merely accumulates energy in memory.
+
+        A tariff change settles in the middle of an attribution window, so it
+        passes ``close_window=False``: a window too young to hold a reading
+        from every meter keeps its energy instead, and carries it into the new
+        tariff period. Valuing at most one window of energy at the incoming
+        tariff costs far less than attributing a grid delta whose battery delta
+        has not arrived yet, which is the error this window exists to prevent.
         """
         async_cancel_scheduled_accounting()
+        async_split_observed_energy(require_aged_window=not close_window)
 
         changed = calculator.settle_pending_accounting(
             import_price=data.import_price,
@@ -295,6 +330,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 data.import_price,
                 data.export_price,
             )
+
+        # Energy left waiting for its window to close has to be retried without
+        # depending on another meter reading, otherwise a quiet meter would
+        # strand it and the bounded waits below would never be re-checked.
+        if calculator.has_unattributed_energy and data.accounting_interval > 0:
+            async_schedule_accounting()
 
     data.settle = async_settle_pending_accounting
 
@@ -331,10 +372,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
     @callback
-    def async_battery_registers_are_readable(
-        readings: Mapping[str, Decimal | None],
-    ) -> bool:
-        """Decide whether the scenario split can run on these readings.
+    def async_battery_registers_are_readable() -> bool:
+        """Decide whether the observed energy can be attributed yet.
 
         A battery register that is momentarily unavailable is worth waiting
         for: its delta is preserved, so a split that runs once it reports again
@@ -342,6 +381,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         to the grid. The wait is bounded, because a sensor that was removed or
         renamed would otherwise stall accounting for good.
         """
+        readings = read_energy_registers()
         if all(readings.get(register) is not None for register in _BATTERY_REGISTERS):
             if data.battery_is_stale:
                 _LOGGER.info(
@@ -374,20 +414,60 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return True
 
     @callback
+    def async_window_holds_every_register() -> bool:
+        """Report whether the open window is old enough to be attributed.
+
+        The meters report at their own pace, so a window only holds a reading
+        from each of them once it has been open for at least as long as the
+        slowest of them. The minimum settlement interval is that bound, which
+        is why a battery entry is floored at it.
+        """
+        opened_at = data.window_opened_at
+        if opened_at is None:
+            return True
+        return time.monotonic() - opened_at >= BATTERY_MIN_ACCOUNTING_INTERVAL
+
+    @callback
+    def async_split_observed_energy(*, require_aged_window: bool = False) -> bool:
+        """Attribute the energy of one settlement window to the scenarios.
+
+        Attribution happens once per window rather than once per reading. The
+        scenarios cancel the battery's contribution against the grid flow of
+        the same window, and the registers do not report together: a smart
+        meter updating every few seconds against a battery updating every
+        minute would leave almost every window holding one side of the
+        cancellation and a zero for the other, crediting grid export that the
+        battery produced to the panels and the battery's discharge to an import
+        it never avoided. Valuing the energy over the same window it was
+        attributed in keeps the two in step.
+
+        ``require_aged_window`` refuses to close a window that is still too
+        young to hold a reading from every meter, which is what a settlement
+        forced by a tariff change would otherwise do.
+        """
+        if not calculator.has_unattributed_energy:
+            return False
+        if track_battery:
+            if require_aged_window and not async_window_holds_every_register():
+                return False
+            if not async_battery_registers_are_readable():
+                return False
+        if not calculator.split_scenarios():
+            return False
+        data.window_opened_at = None
+        return True
+
+    @callback
     def handle_energy_event(_event: Event) -> None:
-        """Observe every energy register, then attribute what can be attributed.
+        """Record every energy register without attributing it yet.
 
         All registers are re-read on any of their updates, so a reading is
         never attributed to a scenario before its siblings had the chance to
         report the same window.
         """
-        readings = read_energy_registers()
-        changed = calculator.observe(**readings)
-
-        if not track_battery or async_battery_registers_are_readable(readings):
-            changed = calculator.split_scenarios() or changed
-
-        if changed:
+        if calculator.observe(**read_energy_registers()):
+            if data.window_opened_at is None and calculator.has_unattributed_energy:
+                data.window_opened_at = time.monotonic()
             async_schedule_accounting()
 
     @callback
@@ -409,7 +489,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ):
             return
 
-        async_settle_pending_accounting()
+        async_settle_pending_accounting(close_window=False)
         data.import_price = new_import_price
         data.export_price = new_export_price
 

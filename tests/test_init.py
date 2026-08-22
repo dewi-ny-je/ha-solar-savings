@@ -11,9 +11,11 @@ from custom_components.solar_savings import (
     energy_to_kwh,
     flatten_config,
     resolve_accounting_interval,
+    settlement_interval_for,
     unique_id_for,
 )
 from custom_components.solar_savings.const import (
+    BATTERY_MIN_ACCOUNTING_INTERVAL,
     CONF_ACCOUNTING_INTERVAL,
     CONF_BATTERY_CHARGE_ENERGY_SENSOR,
     CONF_BATTERY_DISCHARGE_ENERGY_SENSOR,
@@ -175,3 +177,36 @@ def test_flatten_config_leaves_a_solar_only_entry_alone() -> None:
 
     assert config == {CONF_SOLAR_ENERGY_SENSOR: "sensor.solar"}
     assert battery_is_tracked(config) is False
+
+
+def test_settlement_interval_floors_battery_entries() -> None:
+    """Battery energy needs a window that holds a reading from every meter."""
+    battery = {
+        CONF_GRID_IMPORT_ENERGY_SENSOR: "sensor.grid_import",
+        CONF_BATTERY_CHARGE_ENERGY_SENSOR: "sensor.charge",
+        CONF_BATTERY_DISCHARGE_ENERGY_SENSOR: "sensor.discharge",
+        CONF_ACCOUNTING_INTERVAL: 0,
+    }
+
+    assert settlement_interval_for(battery) == BATTERY_MIN_ACCOUNTING_INTERVAL
+    assert resolve_accounting_interval(battery) == 0
+
+
+LONG_INTERVAL = 300
+
+
+def test_settlement_interval_keeps_a_longer_configured_interval() -> None:
+    """A user who wants a longer window keeps it."""
+    battery = {
+        CONF_GRID_IMPORT_ENERGY_SENSOR: "sensor.grid_import",
+        CONF_BATTERY_CHARGE_ENERGY_SENSOR: "sensor.charge",
+        CONF_BATTERY_DISCHARGE_ENERGY_SENSOR: "sensor.discharge",
+        CONF_ACCOUNTING_INTERVAL: LONG_INTERVAL,
+    }
+
+    assert settlement_interval_for(battery) == LONG_INTERVAL
+
+
+def test_settlement_interval_leaves_solar_only_entries_alone() -> None:
+    """Without a battery there is nothing to align, so 0 still means 0."""
+    assert settlement_interval_for({CONF_ACCOUNTING_INTERVAL: 0}) == 0

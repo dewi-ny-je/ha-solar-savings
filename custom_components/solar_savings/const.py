@@ -44,6 +44,15 @@ BATTERY_CONF_KEYS: Final = (
 # late.
 BATTERY_STALE_TIMEOUT: Final = 300.0
 
+# Shortest window over which battery energy may be attributed. The scenarios
+# are built by cancelling the battery's contribution against the grid flow of
+# the same window, which only works when the window is long enough to hold a
+# reading from every register: a smart meter that reports every few seconds
+# would otherwise be compared against a battery that reports every minute, and
+# each would be cancelled against a zero. A battery entry therefore settles at
+# no less than this, whatever the configured accounting interval.
+BATTERY_MIN_ACCOUNTING_INTERVAL: Final = 60.0
+
 CONF_ACCOUNTING_INTERVAL: Final = "accounting_interval"
 
 # Key used before the accounting interval became a fixed settlement period

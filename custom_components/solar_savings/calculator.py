@@ -45,6 +45,15 @@ SETTABLE_VALUE_KEYS = (
     "virtual_import_without_solar",
 )
 
+# Registers whose observed energy has not been attributed to the scenarios yet.
+UNSPLIT_ENERGY_KEYS = (
+    "unsplit_solar_energy",
+    "unsplit_grid_import_energy",
+    "unsplit_grid_export_energy",
+    "unsplit_battery_charge_energy",
+    "unsplit_battery_discharge_energy",
+)
+
 # Settable totals that count energy instead of money, and therefore may never
 # become negative.
 ENERGY_VALUE_KEYS = (
@@ -255,6 +264,20 @@ class SolarSavingsCalculator:
     def as_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable snapshot."""
         return asdict(self._snapshot)
+
+    @property
+    def has_unattributed_energy(self) -> bool:
+        """Report whether observed energy is still waiting to be attributed.
+
+        The caller decides when a window may be attributed, and needs to know
+        whether anything is waiting on that decision: a window that holds no
+        energy must not start a wait, and one that does must be retried until
+        it closes.
+        """
+        return any(
+            Decimal(getattr(self._snapshot, key)) > ZERO
+            for key in UNSPLIT_ENERGY_KEYS
+        )
 
     def _add(self, value_key: str, amount: Decimal) -> None:
         """Add an increment to a cumulative total."""
