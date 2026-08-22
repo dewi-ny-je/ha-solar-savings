@@ -361,3 +361,59 @@ def test_settlement_boundaries_do_not_change_the_totals() -> None:
     )
 
     assert once.values == per_reading.values
+
+
+def test_frequent_meter_and_slow_battery_do_not_credit_solar() -> None:
+    """A window must hold both sides of the battery cancellation.
+
+    Smart meters report every few seconds while battery counters report about
+    once a minute. Attributing each reading as it arrives leaves almost every
+    window with grid export and no battery delta - which reads as solar export
+    - and the occasional window with a battery delta and no grid export, which
+    reads as an avoided import. Neither happened: the battery sold to the grid.
+    """
+    calc = battery_calculator()
+
+    # One minute of a battery discharging into the grid, at the cadence the
+    # two meters actually report at.
+    for step in range(1, 9):
+        calc.observe(export_energy=Decimal("0.0025") * step)
+    calc.observe(battery_discharge_energy=Decimal("0.025"))
+
+    calc.split_scenarios()
+    calc.settle_pending_accounting(
+        import_price=Decimal("0.34"),
+        export_price=Decimal("0.30"),
+    )
+
+    assert calc.values.solar_savings == Decimal("0")
+    assert calc.values.self_consumption_savings == Decimal("0")
+    assert calc.values.export_revenue == Decimal("0")
+    # 0.020 kWh sold at 0.30 and 0.005 kWh that would have been imported at
+    # 0.34, neither of which the house would have seen without the battery.
+    assert calc.values.battery_savings == Decimal("0.00770")
+    assert_scenarios_are_consistent(calc)
+
+
+def test_night_export_stays_out_of_solar_savings_over_many_windows() -> None:
+    """A whole evening of battery export must leave solar savings untouched."""
+    calc = battery_calculator()
+    export = Decimal("0")
+    discharge = Decimal("0")
+
+    for _ in range(60):
+        # Each window exports 0.02 kWh of a 0.025 kWh discharge; the rest ran
+        # the house.
+        export += Decimal("0.02")
+        discharge += Decimal("0.025")
+        calc.observe(export_energy=export)
+        calc.observe(battery_discharge_energy=discharge)
+        calc.split_scenarios()
+        calc.settle_pending_accounting(
+            import_price=Decimal("0.34"),
+            export_price=Decimal("0.30"),
+        )
+
+    assert calc.values.solar_savings == Decimal("0")
+    assert calc.values.battery_savings == Decimal("0.4620")
+    assert calc.values.virtual_export_without_battery == Decimal("0")

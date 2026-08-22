@@ -83,7 +83,9 @@ The integration listens continuously to every configured energy register and to 
 observed_delta += max(reading - previous_reading, 0)
 ```
 
-**Splitting.** The observed deltas are attributed to the three scenarios. This is pure energy arithmetic, so it runs on every reading, which keeps the correction accurate: the finer the window, the less an import and an export inside the same window can cancel each other out before the battery correction is applied.
+**Attributing.** The observed deltas are attributed to the three scenarios, once per settlement window.
+
+This is deliberately *not* done per reading. The battery correction is cancelled against the grid flow of the same window, and the registers do not report together: a smart meter typically reports every few seconds while a battery counter reports about once a minute. Attributing each reading on arrival would leave almost every window holding grid export with no battery delta - which reads as solar export - and the occasional window holding a battery delta with no grid export, which reads as an avoided import. A battery selling to the grid overnight would show up as solar export revenue on a night with no sun. Attributing over the window the energy is then valued in keeps both sides of the cancellation together.
 
 **Settling.** The accumulated scenario energy is converted into money. Revenue is linear in energy, so while a tariff is constant `sum(energy_i) * price` equals `sum(energy_i * price)`, and valuing every single reading would only mean a stored-state write every few seconds. A settlement happens:
 
@@ -98,7 +100,9 @@ If a tariff needed by a settlement is unknown - an unavailable price sensor, or 
 
 The solar counter usually reports every few minutes while the smart meter reports every few seconds, so a settlement can land after export was recorded but before the solar reading that covers it. Export energy that no solar reading covers yet is carried over and subtracted from the next settlement's generation, instead of being dropped and then credited again at the higher import tariff. That makes the solar split independent of where the settlement boundaries fall.
 
-Battery registers are handled at the earlier, splitting stage. If one of them has no usable value, the observed grid energy is **held unsplit** rather than being attributed to a battery that may or may not have been running: the deltas are preserved, so the split is exact once the register reports again. The wait is bounded at **5 minutes**; past that the sensor is treated as gone, the held energy is accounted for as if the battery had been idle, and a warning is logged. A warning is logged once per outage, and an informational message when the register recovers.
+The battery registers are handled by the settlement window itself, as described above: the window has to be long enough to hold a reading from every meter, which is why a battery entry never settles faster than **60 seconds** however short its accounting interval is.
+
+If a battery register has no usable value at all when a window closes, the observed energy is **held unattributed** rather than being assigned to a battery that may or may not have been running: the deltas are preserved, so attribution is exact once the register reports again. The wait is bounded at **5 minutes**; past that the sensor is treated as gone, the held energy is accounted for as if the battery had been idle, and a warning is logged. A warning is logged once per outage, and an informational message when the register recovers.
 
 ### Accounting interval
 
@@ -107,7 +111,9 @@ The **Accounting interval** defaults to **60 seconds**, for new entries and for 
 - A positive value, such as `60 s`, accumulates energy and values it once per interval, plus once per tariff change.
 - `0 s` values the accumulated energy on every sensor update.
 
-Because a tariff change always triggers its own settlement, the interval mostly decides how often the savings sensors update rather than what they add up to.
+Without a battery, the interval mostly decides how often the savings sensors update rather than what they add up to: a tariff change always triggers its own settlement, and the solar split is boundary-independent.
+
+**With a battery it is also the attribution window**, so it has to be long enough to hold a reading from each of the grid and battery meters. A battery entry therefore settles at no less than **60 seconds**, and `0 s` is raised to that with a note in the log. Raise it if your battery counters report less often than once a minute; a window that is very long instead starts to blur the battery attribution, because an import and an export inside one window partly cancel before the correction is applied. Anything from roughly one to five minutes is a good place to be.
 
 ## Input sensors
 
@@ -119,7 +125,7 @@ During setup, select four sensors and one accounting option:
 | Import price | currency/kWh | Current dynamic price paid for imported electricity. |
 | Exported energy | kWh | Smart meter export counter. |
 | Export price | currency/kWh | Current dynamic price received for exported electricity. |
-| Accounting interval | seconds | How often accumulated energy is valued. Defaults to `60`. A tariff change always forces a settlement of its own, at the outgoing tariff. Set it to `0` to value energy on every sensor update. |
+| Accounting interval | seconds | How often accumulated energy is attributed and valued. Defaults to `60`. A tariff change always forces a settlement of its own, at the outgoing tariff. Set it to `0` to value energy on every sensor update; with battery tracking the minimum is `60`. |
 
 The **Battery tracking** section at the bottom of the form is optional, and takes three more sensors. Fill in **all three or none**: the form rejects a partial selection, because a scenario cannot be built without all of them.
 
@@ -128,6 +134,8 @@ The **Battery tracking** section at the bottom of the form is optional, and take
 | Imported energy | kWh | Smart meter import counter. Needed to price a scenario. |
 | Battery charged energy | kWh | Cumulative energy that went into the battery. |
 | Battery discharged energy | kWh | Cumulative energy taken out of the battery. |
+
+Check how often these three counters update. The accounting interval has to be at least as long as the slowest of them, or the battery's contribution cannot be cancelled against the grid flow it belongs to.
 
 All energy sensors are read in `Wh`, `kWh`, or `MWh` and must be monotonically increasing, apart from resets such as a daily counter returning to zero, which are detected and ignored.
 

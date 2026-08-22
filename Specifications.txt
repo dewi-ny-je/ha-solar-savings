@@ -95,3 +95,24 @@ The scenario costs and the virtual "no battery" and "no battery, no solar"
 energy meters are published as entities that are disabled by default, so only
 users who want them pay for them, and they can be seeded or corrected with the
 same set_value action as the savings totals.
+
+--- Correction: the attribution window ---
+
+Attributing the scenarios on every change of any energy register, as the
+amendment above prescribed, is wrong in practice. The battery correction is
+cancelled against the grid flow of the same window, and the registers do not
+report together: a smart meter reports every few seconds while a battery
+counter reports about once a minute. Almost every window then holds grid
+export with no battery delta, which is read as solar export, and the
+occasional window holds a battery delta with no grid export, which is read as
+an avoided import. A battery selling to the grid overnight showed up as solar
+export revenue on a night with no sun, of exactly the amount
+"grid export * export price".
+
+Attribution therefore happens once per settlement window, over the same energy
+the settlement is about to value. Because the window now has to hold a reading
+from every meter, a battery entry settles at no less than sixty seconds,
+whatever the configured accounting interval says. Measured against recorded
+history, the spurious solar savings of an evening of battery export fall from
+the full export revenue to under one percent of it, and the result is stable
+for any window between thirty seconds and an hour.

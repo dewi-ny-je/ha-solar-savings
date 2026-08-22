@@ -16,7 +16,7 @@
         "sections": {
           "battery": {
             "name": "Battery tracking (optional)",
-            "description": "Select all three sensors to also account for a home battery, or leave them all empty. With them, the integration compares what you actually paid against two hypothetical houses: one with the panels but no battery, and one with neither. That splits the savings into a solar and a battery part, and no longer assumes that everything the meter exported came from the panels.",
+            "description": "Select all three sensors to also account for a home battery, or leave them all empty. With them, the integration compares what you actually paid against two hypothetical houses: one with the panels but no battery, and one with neither. That splits the savings into a solar and a battery part, and no longer assumes that everything the meter exported came from the panels. Battery energy is attributed over the accounting interval, so that window must be at least as long as the slowest of these counters; an entry that tracks a battery settles at no less than 60 seconds.",
             "data": {
               "grid_import_energy_sensor": "Imported energy sensor",
               "battery_charge_energy_sensor": "Battery charged energy sensor",
@@ -51,7 +51,7 @@
         "sections": {
           "battery": {
             "name": "Battery tracking (optional)",
-            "description": "Select all three sensors to also account for a home battery, or leave them all empty. With them, the integration compares what you actually paid against two hypothetical houses: one with the panels but no battery, and one with neither. That splits the savings into a solar and a battery part, and no longer assumes that everything the meter exported came from the panels.",
+            "description": "Select all three sensors to also account for a home battery, or leave them all empty. With them, the integration compares what you actually paid against two hypothetical houses: one with the panels but no battery, and one with neither. That splits the savings into a solar and a battery part, and no longer assumes that everything the meter exported came from the panels. Battery energy is attributed over the accounting interval, so that window must be at least as long as the slowest of these counters; an entry that tracks a battery settles at no less than 60 seconds.",
             "data": {
               "grid_import_energy_sensor": "Imported energy sensor",
               "battery_charge_energy_sensor": "Battery charged energy sensor",
