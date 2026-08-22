@@ -92,6 +92,8 @@ This is deliberately *not* done per reading. The battery correction is cancelled
 - once per **accounting interval**, armed by the first meter reading after the previous settlement, and
 - immediately **before an import or export tariff change is applied**, using the tariff that was in force before the change.
 
+A tariff change lands in the middle of an attribution window. It values everything already attributed at the outgoing tariff, but it does **not** close a window too young to hold a reading from every meter: that energy stays where it is and is carried into the new tariff period. At most one window of energy is then valued at the incoming tariff, which costs far less than attributing a grid delta whose battery delta has not arrived yet.
+
 Settlements are the only point where the sensors are written and the accounting snapshot is persisted. Pending energy is settled and persisted on shutdown and on reload, so nothing is lost.
 
 If a tariff needed by a settlement is unknown - an unavailable price sensor, or a restart before the first price arrives - the settlement is deferred instead of dropping the energy: it stays pending and is valued by the next settlement that has a price.
@@ -103,6 +105,8 @@ The solar counter usually reports every few minutes while the smart meter report
 The battery registers are handled by the settlement window itself, as described above: the window has to be long enough to hold a reading from every meter, which is why a battery entry never settles faster than **60 seconds** however short its accounting interval is.
 
 If a battery register has no usable value at all when a window closes, the observed energy is **held unattributed** rather than being assigned to a battery that may or may not have been running: the deltas are preserved, so attribution is exact once the register reports again. The wait is bounded at **5 minutes**; past that the sensor is treated as gone, the held energy is accounted for as if the battery had been idle, and a warning is logged. A warning is logged once per outage, and an informational message when the register recovers.
+
+Held energy keeps the settlement timer armed, so both of these waits run down on their own. Neither depends on another meter reading arriving to be re-checked, which matters precisely when the meter that stopped reporting is the one holding things up.
 
 ### Accounting interval
 
