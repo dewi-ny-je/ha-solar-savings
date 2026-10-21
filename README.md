@@ -180,7 +180,8 @@ The new value is persisted immediately and the derived sensors are recalculated.
 
 ### HACS custom repository
 
-Once you publish this repository on GitHub, add it to HACS as a custom integration repository.
+This card is available in [HACS](https://www.hacs.xyz/) (Home Assistant Community Store). HACS is a third-party community store and is not included in Home Assistant out of the box. Follow the instructions in the website linked to install it.
+Once you installed HACS, search for Solar Savings in the default list and then install it.
 
 ## Development
 
@@ -216,5 +217,3 @@ This project includes:
 - Pure calculation logic with regression tests, including the identities that tie the three scenarios together.
 - Ruff, mypy, pytest, and coverage configuration.
 - A GitHub Actions workflow for continuous integration.
-
-Before requesting inclusion in Home Assistant Core, replace placeholder code owners, add official documentation and branding assets, and run Home Assistant's `hassfest` validation in a Home Assistant Core checkout.
