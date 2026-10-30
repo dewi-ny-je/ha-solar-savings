@@ -337,6 +337,8 @@ def test_savings_totals_are_derived_and_settable() -> None:
     assert calc.set_public_value("total_savings", Decimal("20")) is True
     assert calc.values.solar_savings == Decimal("10")
     assert calc.values.total_savings == Decimal("20")
+    assert calc.values.solar_savings_adjustment == Decimal("5")
+    assert calc.values.total_savings_adjustment == Decimal("7.5")
 
     # The components stay untouched and keep moving the derived totals.
     calc.set_public_value("battery_savings", Decimal("3.5"))

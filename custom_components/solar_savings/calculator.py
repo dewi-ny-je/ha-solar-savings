@@ -182,6 +182,8 @@ class SolarSavingsValues:
     virtual_import_without_battery: Decimal
     virtual_export_without_battery: Decimal
     virtual_import_without_solar: Decimal
+    solar_savings_adjustment: Decimal
+    total_savings_adjustment: Decimal
 
 
 @dataclass(slots=True, frozen=True)
@@ -403,6 +405,8 @@ class SolarSavingsCalculator:
                 snapshot.virtual_export_without_battery
             ),
             virtual_import_without_solar=Decimal(snapshot.virtual_import_without_solar),
+            solar_savings_adjustment=Decimal(snapshot.solar_savings_adjustment),
+            total_savings_adjustment=Decimal(snapshot.total_savings_adjustment),
         )
 
     def seed(

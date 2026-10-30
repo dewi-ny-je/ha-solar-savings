@@ -101,6 +101,12 @@
       },
       "virtual_import_without_solar": {
         "name": "Imported energy without battery and solar"
+      },
+      "solar_savings_adjustment": {
+        "name": "Solar savings correction"
+      },
+      "total_savings_adjustment": {
+        "name": "Total savings correction"
       }
     }
   },

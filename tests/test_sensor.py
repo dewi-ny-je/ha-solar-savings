@@ -56,3 +56,22 @@ def test_a_battery_entry_leads_with_the_three_savings() -> None:
     assert {"actual_cost", "virtual_import_without_solar"} <= {
         description.key for description in descriptions
     }
+
+
+def test_corrections_are_published_disabled() -> None:
+    """The gaps behind corrected savings are hidden diagnostics on every entry."""
+    for track_battery in (False, True):
+        corrections = {
+            description.key: description
+            for description in descriptions_for(track_battery=track_battery)
+            if description.key.endswith("_adjustment")
+        }
+
+        assert set(corrections) == {
+            "solar_savings_adjustment",
+            "total_savings_adjustment",
+        }
+        for description in corrections.values():
+            assert description.entity_registry_enabled_default is False
+            assert description.state_class is None
+            assert description.key not in SETTABLE_VALUE_KEYS

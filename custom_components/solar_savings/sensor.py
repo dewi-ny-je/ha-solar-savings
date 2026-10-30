@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfEnergy
+from homeassistant.const import EntityCategory, UnitOfEnergy
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
@@ -70,6 +70,22 @@ def _money(
     )
 
 
+def _correction(key: str) -> SolarSavingsSensorEntityDescription:
+    """Describe the correction set on a derived savings total.
+
+    It is a fixed offset rather than an accumulating total, so it carries no
+    state class and stays out of long-term statistics.
+    """
+    return SolarSavingsSensorEntityDescription(
+        key=key,
+        translation_key=key,
+        value_key=key,
+        device_class=SensorDeviceClass.MONETARY,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    )
+
+
 def _energy(key: str) -> SolarSavingsSensorEntityDescription:
     """Describe a cumulative virtual energy meter."""
     return SolarSavingsSensorEntityDescription(
@@ -97,6 +113,8 @@ SENSOR_DESCRIPTIONS: tuple[SolarSavingsSensorEntityDescription, ...] = (
     _energy("virtual_import_without_battery"),
     _energy("virtual_export_without_battery"),
     _energy("virtual_import_without_solar"),
+    _correction("solar_savings_adjustment"),
+    _correction("total_savings_adjustment"),
 )
 
 
