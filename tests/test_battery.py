@@ -319,13 +319,9 @@ def test_energy_totals_reject_negative_restores(value_key: str) -> None:
     assert getattr(calc.values, value_key) == Decimal("12.5")
 
 
-def test_savings_totals_are_derived_and_not_settable() -> None:
-    """Solar and total savings follow the totals they are calculated from."""
+def test_savings_totals_are_derived_and_settable() -> None:
+    """Solar and total savings follow their components plus a correction."""
     calc = battery_calculator()
-
-    for value_key in ("solar_savings", "total_savings"):
-        with pytest.raises(ValueError, match="settable"):
-            calc.set_public_value(value_key, Decimal("10"))
 
     calc.set_public_value("self_consumption_savings", Decimal("4"))
     calc.set_public_value("export_revenue", Decimal("1"))
@@ -333,6 +329,29 @@ def test_savings_totals_are_derived_and_not_settable() -> None:
 
     assert calc.values.solar_savings == Decimal("5")
     assert calc.values.total_savings == Decimal("7.5")
+
+    assert calc.set_public_value("solar_savings", Decimal("10")) is True
+    assert calc.values.solar_savings == Decimal("10")
+    assert calc.values.total_savings == Decimal("12.5")
+
+    assert calc.set_public_value("total_savings", Decimal("20")) is True
+    assert calc.values.solar_savings == Decimal("10")
+    assert calc.values.total_savings == Decimal("20")
+
+    # The components stay untouched and keep moving the derived totals.
+    calc.set_public_value("battery_savings", Decimal("3.5"))
+    assert calc.values.self_consumption_savings == Decimal("4")
+    assert calc.values.solar_savings == Decimal("10")
+    assert calc.values.total_savings == Decimal("21")
+
+
+@pytest.mark.parametrize("value_key", ["solar_savings", "total_savings"])
+def test_derived_savings_are_not_restored_from_state(value_key: str) -> None:
+    """The corrections live in the snapshot, not in the rounded sensor state."""
+    calc = battery_calculator()
+
+    assert calc.restore_public_value(value_key, "12.5") is False
+    assert getattr(calc.values, value_key) == Decimal("0")
 
 
 def test_settlement_boundaries_do_not_change_the_totals() -> None:

@@ -157,7 +157,9 @@ Overwrites the stored cumulative total of a Solar Savings sensor. This is useful
 | --- | --- |
 | `value` | New cumulative total: an amount in the configured currency for the monetary sensors, or kWh for the virtual energy meters. Monetary totals may be negative; the energy meters may not. Non-finite values (`NaN`/`∞`) are rejected. Pass the value as a quoted string to preserve exact decimal precision. |
 
-Every stored total can be set: **Self-consumption savings**, **Export revenue**, **Battery savings**, the three scenario costs, and the three virtual energy meters. **Solar savings** and **Total savings** are derived from those totals and do not support this action: they are skipped when you target the whole device or area, and selecting one explicitly is rejected before anything changes. To seed solar savings, set the self-consumption and export totals it is calculated from.
+Every sensor can be set: **Self-consumption savings**, **Export revenue**, **Solar savings**, **Battery savings**, **Total savings**, the three scenario costs, and the three virtual energy meters.
+
+**Solar savings** and **Total savings** are derived from the other totals (`solar = self-consumption + export`, `total = solar + battery`). Setting one of them stores the difference as a correction on top of that sum: the sensor shows exactly the value you set, and from then on keeps growing with the totals it is derived from. Because total savings include solar savings, setting solar savings (or self-consumption, export or battery savings) moves total savings by the same amount. To set several of them, set the components first and the total last.
 
 ```yaml
 action: solar_savings.set_value
