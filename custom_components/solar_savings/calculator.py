@@ -182,8 +182,6 @@ class SolarSavingsValues:
     virtual_import_without_battery: Decimal
     virtual_export_without_battery: Decimal
     virtual_import_without_solar: Decimal
-    solar_savings_adjustment: Decimal
-    total_savings_adjustment: Decimal
 
 
 @dataclass(slots=True, frozen=True)
@@ -335,6 +333,16 @@ class SolarSavingsCalculator:
         setattr(self._snapshot, value_key, str(value))
         return True
 
+    def correction(self, value_key: str) -> Decimal | None:
+        """Return the correction set on a derived total, or ``None``.
+
+        Only the derived savings can carry a correction; every other total is
+        stored as set, so it has nothing to report.
+        """
+        if (adjustment_key := DERIVED_VALUE_ADJUSTMENT_KEYS.get(value_key)) is None:
+            return None
+        return Decimal(getattr(self._snapshot, adjustment_key))
+
     def restore_public_value(self, value_key: str, value: Any) -> bool:
         """Restore a public cumulative value from Home Assistant state storage.
 
@@ -405,8 +413,6 @@ class SolarSavingsCalculator:
                 snapshot.virtual_export_without_battery
             ),
             virtual_import_without_solar=Decimal(snapshot.virtual_import_without_solar),
-            solar_savings_adjustment=Decimal(snapshot.solar_savings_adjustment),
-            total_savings_adjustment=Decimal(snapshot.total_savings_adjustment),
         )
 
     def seed(
