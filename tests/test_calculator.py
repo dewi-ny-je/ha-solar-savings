@@ -148,7 +148,7 @@ def test_restore_public_value_ignores_invalid_and_unchanged_values() -> None:
 
 
 def test_restore_does_not_set_derived_total_directly() -> None:
-    """The total sensor remains derived from self-consumption and export totals."""
+    """The derived total keeps its correction in the snapshot, not in state."""
     calc = SolarSavingsCalculator()
 
     assert calc.restore_public_value("total_savings", "99") is False
@@ -215,12 +215,32 @@ def test_set_public_value_unchanged_returns_false() -> None:
     assert calc.set_public_value("self_consumption_savings", Decimal("0")) is False
 
 
-def test_set_public_value_rejects_derived_total() -> None:
-    """The derived total cannot be overwritten directly."""
+def test_set_public_value_rejects_unknown_key() -> None:
+    """Keys that are not published totals cannot be overwritten."""
     calc = SolarSavingsCalculator()
 
     with pytest.raises(ValueError, match="settable"):
-        calc.set_public_value("total_savings", Decimal("10"))
+        calc.set_public_value("pending_solar_energy", Decimal("10"))
+
+
+def test_set_public_value_corrects_derived_total() -> None:
+    """Setting the total stores a correction that survives later accounting."""
+    calc = SolarSavingsCalculator()
+    calc.seed(solar_energy=Decimal("1"), export_energy=Decimal("1"))
+    calc.handle_solar_update(solar_energy=Decimal("5"), import_price=Decimal("0.30"))
+    assert calc.values.total_savings == Decimal("1.20")
+
+    assert calc.set_public_value("total_savings", Decimal("723.82")) is True
+    assert calc.values.total_savings == Decimal("723.82")
+    assert calc.values.self_consumption_savings == Decimal("1.20")
+    assert calc.values.solar_savings == Decimal("1.20")
+    assert calc.set_public_value("total_savings", Decimal("723.82")) is False
+
+    calc.handle_solar_update(solar_energy=Decimal("6"), import_price=Decimal("0.30"))
+    assert calc.values.total_savings == Decimal("724.12")
+
+    restored = SolarSavingsCalculator.from_dict(calc.as_dict())
+    assert restored.values.total_savings == Decimal("724.12")
 
 
 def test_solar_deltas_can_be_accumulated_before_accounting() -> None:

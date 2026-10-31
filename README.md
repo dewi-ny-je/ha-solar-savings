@@ -26,6 +26,8 @@ Which sensors an entry publishes depends on whether the optional battery section
 - **Battery savings** is what the battery earned by moving energy in time, which is negative whenever it charged from the grid or gave up export revenue, and positive when it later avoided a more expensive import.
 - **Total savings** is the sum of the two, and is exactly *grid cost without battery and solar* minus *actual grid cost*.
 
+**Solar savings** and **Total savings** carry a `correction` attribute: the gap stored when you set them with the [`set_value` action](#solar_savingsset_value). It is `0` until you do.
+
 All three can be negative: exporting at a negative tariff costs money, and so does charging a battery from the grid.
 
 ## Accounting model
@@ -55,6 +57,18 @@ battery_savings = cost_without_battery - actual_cost
 solar_savings   = cost_without_battery_and_solar - cost_without_battery
 total_savings   = cost_without_battery_and_solar - actual_cost
 ```
+
+What is actually stored are the components, and the two headline figures are published as their sums, plus the `correction` attribute each one carries:
+
+```text
+solar_savings = self_consumption_savings + export_revenue + solar_savings.correction
+total_savings = solar_savings + battery_savings + total_savings.correction
+```
+
+- **Self-consumption savings** is the generation the house used instead of exporting, valued at the import price: the import the panels avoided.
+- **Export revenue** is the export of the scenario without the battery, valued at the export price. Without a battery that is simply the export the meter recorded; with one, solar that went through the battery and was used later counts as self-consumed, and what the battery itself earned goes into battery savings.
+
+Without corrections the two forms agree exactly. Once a correction is set with the [`set_value` action](#solar_savingsset_value), the identities in the first block hold only for the uncorrected sums, because a correction deliberately overrides the accounting.
 
 ### One model, with or without a battery
 
@@ -157,7 +171,9 @@ Overwrites the stored cumulative total of a Solar Savings sensor. This is useful
 | --- | --- |
 | `value` | New cumulative total: an amount in the configured currency for the monetary sensors, or kWh for the virtual energy meters. Monetary totals may be negative; the energy meters may not. Non-finite values (`NaN`/`∞`) are rejected. Pass the value as a quoted string to preserve exact decimal precision. |
 
-Every stored total can be set: **Self-consumption savings**, **Export revenue**, **Battery savings**, the three scenario costs, and the three virtual energy meters. **Solar savings** and **Total savings** are derived from those totals and do not support this action: they are skipped when you target the whole device or area, and selecting one explicitly is rejected before anything changes. To seed solar savings, set the self-consumption and export totals it is calculated from.
+Every sensor can be set: **Self-consumption savings**, **Export revenue**, **Solar savings**, **Battery savings**, **Total savings**, the three scenario costs, and the three virtual energy meters.
+
+**Solar savings** and **Total savings** are derived from the other totals (`solar = self-consumption + export`, `total = solar + battery`). Setting one of them stores the difference as a correction on top of that sum, shown in the sensor's `correction` attribute: the sensor shows exactly the value you set, and from then on keeps growing with the totals it is derived from. Because total savings include solar savings, setting solar savings (or self-consumption, export or battery savings) moves total savings by the same amount. To set several of them, set the components first and the total last.
 
 ```yaml
 action: solar_savings.set_value

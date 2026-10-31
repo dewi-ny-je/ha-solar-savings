@@ -65,6 +65,7 @@ DEFAULT_ACCOUNTING_INTERVAL: Final = 60
 CONFIG_ENTRY_VERSION: Final = 2
 
 SERVICE_SET_VALUE: Final = "set_value"
+ATTR_CORRECTION: Final = "correction"
 ATTR_VALUE: Final = "value"
 
 STORAGE_VERSION: Final = 1

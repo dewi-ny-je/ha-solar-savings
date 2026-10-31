@@ -30,13 +30,23 @@ from typing import Any
 
 ZERO = Decimal("0")
 
-# Public cumulative totals that may be overwritten directly. The derived
-# ``solar_savings`` and ``total_savings`` values are intentionally excluded
-# because they are always recomputed from the totals below.
+# Savings totals derived from other totals, mapped to the stored correction
+# that is added on top of them. Setting one of these sensors stores the
+# difference between the requested and the derived value as a correction, so
+# the sensor shows exactly the requested value and keeps following the totals
+# it is derived from afterwards.
+DERIVED_VALUE_ADJUSTMENT_KEYS = {
+    "solar_savings": "solar_savings_adjustment",
+    "total_savings": "total_savings_adjustment",
+}
+
+# Public cumulative totals that may be overwritten directly.
 SETTABLE_VALUE_KEYS = (
     "self_consumption_savings",
     "export_revenue",
+    "solar_savings",
     "battery_savings",
+    "total_savings",
     "actual_cost",
     "cost_without_battery",
     "cost_without_battery_and_solar",
@@ -151,6 +161,10 @@ class SolarSavingsSnapshot:
     virtual_import_without_battery: str = "0"
     virtual_export_without_battery: str = "0"
     virtual_import_without_solar: str = "0"
+
+    # Corrections set through the ``set_value`` action on the derived savings.
+    solar_savings_adjustment: str = "0"
+    total_savings_adjustment: str = "0"
 
 
 @dataclass(slots=True)
@@ -292,7 +306,13 @@ class SolarSavingsCalculator:
 
         Returns ``True`` when the stored value actually changed so the caller
         can decide whether to persist and notify. Raises ``ValueError`` for keys
-        that are not directly settable, such as the derived ``total_savings``.
+        that are not settable.
+
+        The derived ``solar_savings`` and ``total_savings`` are set by storing
+        the difference to their derived value as a correction. They keep
+        following the totals they are derived from afterwards, and since total
+        savings include solar savings, setting solar savings moves the total by
+        the same amount.
 
         Negative monetary totals are valid because negative energy prices can
         make cumulative savings or revenue decrease below zero.
@@ -301,10 +321,27 @@ class SolarSavingsCalculator:
             msg = f"{value_key!r} is not a settable public value"
             raise ValueError(msg)
 
+        if (adjustment_key := DERIVED_VALUE_ADJUSTMENT_KEYS.get(value_key)) is not None:
+            current = getattr(self.values, value_key)
+            if current == value:
+                return False
+            self._add(adjustment_key, value - current)
+            return True
+
         if Decimal(getattr(self._snapshot, value_key)) == value:
             return False
         setattr(self._snapshot, value_key, str(value))
         return True
+
+    def correction(self, value_key: str) -> Decimal | None:
+        """Return the correction set on a derived total, or ``None``.
+
+        Only the derived savings can carry a correction; every other total is
+        stored as set, so it has nothing to report.
+        """
+        if (adjustment_key := DERIVED_VALUE_ADJUSTMENT_KEYS.get(value_key)) is None:
+            return None
+        return Decimal(getattr(self._snapshot, adjustment_key))
 
     def restore_public_value(self, value_key: str, value: Any) -> bool:
         """Restore a public cumulative value from Home Assistant state storage.
@@ -322,9 +359,13 @@ class SolarSavingsCalculator:
         if restored is None:
             return False
 
-        # The savings totals are derived from the totals below and should not
-        # be restored directly, otherwise they could disagree with them.
-        if value_key not in SETTABLE_VALUE_KEYS:
+        # The derived savings are not restored: their corrections are kept in
+        # the stored snapshot, while the restored state is a rounded float that
+        # would turn into a spurious correction on every restart.
+        if (
+            value_key not in SETTABLE_VALUE_KEYS
+            or value_key in DERIVED_VALUE_ADJUSTMENT_KEYS
+        ):
             return False
 
         if value_key in ENERGY_VALUE_KEYS and restored < ZERO:
@@ -340,19 +381,26 @@ class SolarSavingsCalculator:
         into the imports they avoided and the export they earned.
         ``total_savings`` adds what the battery made on top, which is exactly
         the difference between the no-battery-no-solar scenario and what was
-        actually paid.
+        actually paid. Both include the corrections set through
+        :meth:`set_public_value`.
         """
         snapshot = self._snapshot
         self_savings = Decimal(snapshot.self_consumption_savings)
         export_revenue = Decimal(snapshot.export_revenue)
         battery_savings = Decimal(snapshot.battery_savings)
-        solar_savings = self_savings + export_revenue
+        solar_savings = (
+            self_savings + export_revenue + Decimal(snapshot.solar_savings_adjustment)
+        )
         return SolarSavingsValues(
             self_consumption_savings=self_savings,
             export_revenue=export_revenue,
             solar_savings=solar_savings,
             battery_savings=battery_savings,
-            total_savings=solar_savings + battery_savings,
+            total_savings=(
+                solar_savings
+                + battery_savings
+                + Decimal(snapshot.total_savings_adjustment)
+            ),
             actual_cost=Decimal(snapshot.actual_cost),
             cost_without_battery=Decimal(snapshot.cost_without_battery),
             cost_without_battery_and_solar=Decimal(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import Any
 
 import voluptuous as vol
 from homeassistant.components.sensor import (
@@ -26,6 +27,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import SolarSavingsRuntimeData, battery_is_tracked, entry_config
 from .calculator import ENERGY_VALUE_KEYS, SETTABLE_VALUE_KEYS, ZERO, to_finite_decimal
 from .const import (
+    ATTR_CORRECTION,
     ATTR_VALUE,
     DOMAIN,
     SERVICE_SET_VALUE,
@@ -137,10 +139,10 @@ async def async_setup_entry(
         # exact precision is preserved and the payload stays JSON-serializable.
         {vol.Required(ATTR_VALUE): vol.Any(int, float, str)},
         "async_set_value",
-        # Restrict the action to the settable source sensors. Home Assistant
-        # applies this filter before invoking any handler, so targeting a
-        # device or area skips the derived total sensor and an explicit target
-        # of it is rejected up front, never mutating siblings on a failed call.
+        # Restrict the action to the settable sensors. Home Assistant applies
+        # this filter before invoking any handler, so an explicit target of a
+        # sensor that cannot be set is rejected up front, never mutating
+        # siblings on a failed call.
         required_features=[SolarSavingsEntityFeature.SET_VALUE],
     )
 
@@ -179,6 +181,15 @@ class SolarSavingsSensor(RestoreSensor, SensorEntity):
         value = getattr(data.calculator.values, self.entity_description.value_key)
         return float(value)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Expose the correction set on a derived savings total."""
+        data: SolarSavingsRuntimeData = self.entry.runtime_data
+        correction = data.calculator.correction(self.entity_description.value_key)
+        if correction is None:
+            return None
+        return {ATTR_CORRECTION: float(correction)}
+
     async def async_added_to_hass(self) -> None:
         """Restore the last state and subscribe to integration updates."""
         await super().async_added_to_hass()
@@ -209,8 +220,10 @@ class SolarSavingsSensor(RestoreSensor, SensorEntity):
 
         Exposed as the ``solar_savings.set_value`` action so users can
         initialise the integration with totals from a previous system or
-        correct accumulated drift. The ``required_features`` filter on the
-        service registration keeps the derived savings sensors out of the
+        correct accumulated drift. Every published total can be set, including
+        the derived solar and total savings, which store a correction on top of
+        the totals they are derived from. The ``required_features`` filter on
+        the service registration keeps any sensor that cannot be set out of the
         target before any handler runs; the guard below is defence-in-depth for
         direct calls and never mutates state when it rejects.
 
